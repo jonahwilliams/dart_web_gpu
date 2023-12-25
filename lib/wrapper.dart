@@ -18,6 +18,91 @@ enum ShaderType {
   float32x2,
 }
 
+class BindGroupLayoutEntry {
+  const BindGroupLayoutEntry({
+    required this.binding,
+    required this.visibility,
+    this.buffer,
+    this.externalTexture,
+    this.sampler,
+    this.storageTexture,
+    this.texture,
+  });
+
+  /// The binding number that matches the value declared on the resource in the shader.
+  final int binding;
+
+  /// One or more of the GPUShaderStage flags.
+  final int visibility;
+
+  /// Exactly one of the following objects must be defined. Sorry, the API
+  /// is weird.
+  final BufferLayoutObject? buffer;
+  final ExternalTextureLayoutObject? externalTexture;
+  final SamplerLayoutObject? sampler;
+  final StorageTextureLayoutObject? storageTexture;
+  final TextureLayoutObject? texture;
+}
+
+typedef BufferLayoutObject = ({
+  bool? hasDynamicOffset,
+  int? minBindingSize,
+  BufferLayoutType? type,
+});
+
+typedef ExternalTextureLayoutObject = ();
+
+enum BufferLayoutType {
+  readOnlyStorage,
+  storage,
+  uniform,
+}
+
+typedef SamplerLayoutObject = ();
+
+enum SamplerLayoutType {
+  comparison,
+  filtering,
+  nonFiltering,
+}
+
+typedef StorageTextureLayoutObject = ();
+typedef TextureLayoutObject = ({
+  bool? multisampled,
+});
+
+extension BufferLayoutTypeHelpers on BufferLayoutType {
+  String toGPUString() {
+    switch (this) {
+      case BufferLayoutType.readOnlyStorage:
+        return 'read-only-storage';
+      case BufferLayoutType.storage:
+      case BufferLayoutType.uniform:
+        return name;
+    }
+  }
+}
+
+extension SamplerLayoutTypeHelpers on SamplerLayoutType {
+  String toGPUString() {
+    switch (this) {
+      case SamplerLayoutType.nonFiltering:
+        return 'non-filtering';
+      case SamplerLayoutType.comparison:
+      case SamplerLayoutType.filtering:
+        return name;
+    }
+  }
+}
+
+enum ResourceLayoutObject {
+  buffer,
+  externalTexture,
+  sampler,
+  storageTexture,
+  texture,
+}
+
 final class DeviceBuffer {
   DeviceBuffer._(this._device, this._buffer, this.lengthInBytes);
 
@@ -25,10 +110,10 @@ final class DeviceBuffer {
   final GPUBuffer _buffer;
   final int lengthInBytes;
 
-  void update(Float32List data, {int offset = 0}) {
-    assert(data.length <= lengthInBytes);
-    assert(data.length + offset <= lengthInBytes);
-    _device.queue.writeBuffer(_buffer, offset.toJS, data.toJS);
+  void update(TypedData data, {int offset = 0}) {
+    assert(data.lengthInBytes <= lengthInBytes);
+    assert(data.lengthInBytes + offset <= lengthInBytes);
+    _device.queue.writeBuffer(_buffer, offset.toJS, data.buffer.toJS);
   }
 
   static const int kWholeSize = -1;
@@ -78,7 +163,25 @@ final class Context {
     return CommandBuffer._(_device, label);
   }
 
-  Future<RenderTarget> createOnscreen(Canvas canvas) async {
+  GPUBindGroup createBindGroup({
+    String? label,
+    required GPUBindGroupLayout layout,
+    required List<({int binding, BindGroupResource resource})> entries,
+  }) {
+    return _device.createBindGroup({
+      'label': label?.toJS,
+      'layout': layout,
+      'entries': [
+        for (var entry in entries)
+          {
+            'binding': entry.binding,
+            'resource': entry.resource.toJS(),
+          },
+      ],
+    }.jsify());
+  }
+
+  Future<CanvasSwapchain> createSwapchain(Canvas canvas) async {
     var canvasContext = canvas.getContext('webgpu'.toJS);
     var preferredFormat = navigator.gpu!.getPreferredCanvasFormat().toDart;
     TextureFormat selectedFormat = TextureFormat.bgra8unorm;
@@ -94,7 +197,7 @@ final class Context {
       'format': selectedFormat.name,
     }.jsify());
 
-    return OnscreenRenderTarget._(canvas, canvasContext, selectedFormat);
+    return CanvasSwapchain._(canvasContext, canvas, selectedFormat);
   }
 
   DeviceBuffer createDeviceBuffer({
@@ -111,17 +214,56 @@ final class Context {
     return DeviceBuffer._(_device, buffer, lengthInBytes);
   }
 
+  GPUBindGroupLayout createBindGroupLayout({
+    String? label,
+    required List<BindGroupLayoutEntry> entries,
+  }) {
+    return _device.createBindGroupLayout({
+      'label': label,
+      'entries': [
+        for (var entry in entries)
+          {
+            'binding': entry.binding,
+            'visibility': entry.visibility,
+            if (entry.buffer != null)
+              'buffer': {
+                'hasDynamicOffset': entry.buffer!.hasDynamicOffset ?? false,
+                'minBindingSize': entry.buffer!.minBindingSize ?? 0,
+                'type': (entry.buffer!.type ?? BufferLayoutType.uniform)
+                    .toGPUString(),
+              },
+            if (entry.sampler != null)
+              'sampler': {
+                'type': 'filtering',
+              },
+            // TODO: other types
+          },
+      ],
+    }.jsify());
+  }
+
+  GPUPipelineLayout createPipelineLayout({
+    String? label,
+    required List<GPUBindGroupLayout> layouts,
+  }) {
+    return _device.createPipelineLayout({
+      'label': label,
+      'bindGroupLayouts': layouts,
+    }.jsify());
+  }
+
   GPURenderPipeline createRenderPipeline({
     String? label,
     required GPUShaderModule module,
     required String fragmentEntrypoint,
     required String vertexEntrypoint,
     required List<VertexLayoutDescriptor> layouts,
+    required GPUPipelineLayout pipelineLayout,
     required TextureFormat format,
   }) {
     return _device.createRenderPipeline({
       'label': label,
-      'layout': 'auto',
+      'layout': pipelineLayout,
       'vertex': {
         'module': module,
         'entryPoint': vertexEntrypoint,
@@ -243,6 +385,10 @@ final class RenderPass {
         bufferView.offset.toJS, bufferView.size.toJS);
   }
 
+  void setBindGroup(int binding, GPUBindGroup group) {
+    _renderPass.setBindGroup(binding.toJS, group);
+  }
+
   void draw(int vertexCount) {
     assert(!_debugIsEnded);
     assert(vertexCount > 0);
@@ -265,18 +411,8 @@ enum TextureFormat {
   rgba8unorm,
 }
 
-abstract base class RenderTarget {
-  const RenderTarget();
-
-  TextureFormat get format;
-  int get width;
-  int get height;
-
-  GPUTextureView createView();
-}
-
-final class OffscreenRenderTarget extends RenderTarget {
-  const OffscreenRenderTarget({
+final class RenderTarget {
+  const RenderTarget({
     required this.texture,
     required this.format,
     required this.width,
@@ -284,39 +420,51 @@ final class OffscreenRenderTarget extends RenderTarget {
   });
 
   final GPUTexture texture;
-  @override
   final TextureFormat format;
-  @override
   final int width;
-  @override
   final int height;
 
-  @override
   GPUTextureView createView() {
     return texture.createView();
   }
 }
 
-// This class is sort of magic and mixes the render target with a swapchain.
-// This logic  should probably be split into a swapchain class, so that
-// multiple references to the onscreen target work correctly.
-final class OnscreenRenderTarget extends RenderTarget {
-  const OnscreenRenderTarget._(this._canvas, this._context, this.format);
+final class CanvasSwapchain {
+  CanvasSwapchain._(this._context, this._canvas, this.format);
 
   final GPUCanvasContext _context;
   final Canvas _canvas;
 
-  @override
+  /// The format of all render targets created by this swapchain.
   final TextureFormat format;
 
-  @override
-  GPUTextureView createView() {
-    return _context.getCurrentTexture().createView();
+  RenderTarget createNext() {
+    return RenderTarget(
+      format: format,
+      texture: _context.getCurrentTexture(),
+      width: _canvas.width.toDartInt,
+      height: _canvas.height.toDartInt,
+    );
   }
+}
+
+abstract base class BindGroupResource {
+  const BindGroupResource();
+
+  JSAny? toJS();
+}
+
+final class BufferBindGroup extends BindGroupResource {
+  const BufferBindGroup(this.view);
+
+  final BufferView view;
 
   @override
-  int get height => _canvas.width.toDartInt;
-
-  @override
-  int get width => _canvas.height.toDartInt;
+  JSAny? toJS() {
+    return {
+      'buffer': view.buffer._buffer,
+      'offset': view.offset,
+      'size': view.size,
+    }.jsify();
+  }
 }

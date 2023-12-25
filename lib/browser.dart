@@ -133,7 +133,31 @@ extension GPUDeviceHelpers on GPUDevice {
   ///   mappedAtCreation to true even if usage does not contain MAP_READ or MAP_WRITE.
   ///   This can be used to set the buffer’s initial data.
   external GPUBuffer createBuffer(JSAny? map);
+
+  /// Create a bind group layout.
+  ///
+  /// Example:
+  ///  entries: [
+  ///    {
+  ///      binding: 0,
+  ///      visibility: GPUShaderStage.VERTEX,
+  ///      buffer: {type: "uniform"}
+  ///    },
+  /// ]
+  external GPUBindGroupLayout createBindGroupLayout(JSAny? map);
+
+  external GPUPipelineLayout createPipelineLayout(JSAny? map);
+
+  external GPUBindGroup createBindGroup(JSAny? map);
 }
+
+@JS()
+@staticInterop
+abstract class GPUBindGroupLayout {}
+
+@JS()
+@staticInterop
+abstract class GPUPipelineLayout {}
 
 abstract class GPUBufferUsage {
   /// The buffer can be mapped for reading. (Example: calling mapAsync() with GPUMapMode.READ)
@@ -157,6 +181,12 @@ abstract class GPUBufferUsage {
   static const int STORAGE = 0x0080;
   static const int INDIRECT = 0x0100;
   static const int QUERY_RESOLVE = 0x0200;
+}
+
+abstract class GPUShaderStage {
+  static const int COMPUTE = 4;
+  static const int FRAGMENT = 2;
+  static const int VERTEX = 1;
 }
 
 @JS()
@@ -193,6 +223,8 @@ extension GPURenderPassHelpers on GPURenderPass {
 
   external void setVertexBuffer(JSNumber slot, GPUBuffer? buffer,
       [JSNumber? offset, JSNumber? size]);
+
+  external void setBindGroup(JSNumber binding, GPUBindGroup bindGroup);
 
   external void draw(JSNumber vertexCount,
       [JSNumber? instanceCount,
@@ -234,3 +266,7 @@ extension GPUDeviceQueueHelpers on GPUDeviceQueue {
 
   external void writeBuffer(GPUBuffer buffer, JSNumber offset, JSAny data);
 }
+
+@JS()
+@staticInterop
+class GPUBindGroup {}
