@@ -181,7 +181,7 @@ final class Context {
     }.jsify());
   }
 
-  Future<CanvasSwapchain> createSwapchain(Canvas canvas) async {
+  Future<CanvasSwapchain> createSwapchain(HTMLCanvas canvas) async {
     var canvasContext = canvas.getContext('webgpu'.toJS);
     var preferredFormat = navigator.gpu!.getPreferredCanvasFormat().toDart;
     TextureFormat selectedFormat = TextureFormat.bgra8unorm;
@@ -433,7 +433,7 @@ final class CanvasSwapchain {
   CanvasSwapchain._(this._context, this._canvas, this.format);
 
   final GPUCanvasContext _context;
-  final Canvas _canvas;
+  final HTMLCanvas _canvas;
 
   /// The format of all render targets created by this swapchain.
   final TextureFormat format;

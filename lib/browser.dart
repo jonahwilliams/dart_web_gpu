@@ -11,9 +11,9 @@ class Element {}
 
 @JS()
 @staticInterop
-class Canvas extends Element {}
+class HTMLCanvas extends Element {}
 
-extension CanvasHelper on Canvas {
+extension CanvasHelper on HTMLCanvas {
   external GPUCanvasContext getContext(JSString id);
 }
 
