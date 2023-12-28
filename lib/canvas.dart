@@ -33,6 +33,7 @@ class ContentContext {
 
     var pipeline = context.createRenderPipeline(
       pipelineLayout: pipelineLayout,
+      sampleCount: SampleCount.four,
       module: context.createShaderModule(code: '''
 struct UniformData {
   mvp: mat4x4<f32>,
@@ -146,7 +147,7 @@ class Tessellator {
 }
 
 Matrix4 makeOrthograpgic(int width, int height) {
-  var scale = Matrix4.identity()..scale(2.0 / width, - 2.0 / height, 0);
+  var scale = Matrix4.identity()..scale(2.0 / width, -2.0 / height, 0);
   var translate = Matrix4.identity()..translate(-1, 1.0, 0.5);
   return translate * scale;
 }

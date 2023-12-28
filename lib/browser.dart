@@ -69,6 +69,8 @@ class GPUTexture {}
 
 extension GPUTextureHelpers on GPUTexture {
   external GPUTextureView createView([JSAny? args]);
+
+  external void destroy();
 }
 
 @JS()
@@ -111,6 +113,14 @@ extension GPUAdapterHelpers on GPUAdapter {
 @staticInterop
 class GPUDevice {}
 
+class GPUTextureUsage {
+  static const int COPY_SRC = 1;
+  static const int COPY_DST = 2;
+  static const int TEXTURE_BINDING = 4;
+  static const int STORAGE_BINDING = 8;
+  static const int RENDER_ATTACHMENT = 16;
+}
+
 extension GPUDeviceHelpers on GPUDevice {
   external GPUShaderModule createShaderModule(JSAny? map);
 
@@ -149,6 +159,8 @@ extension GPUDeviceHelpers on GPUDevice {
   external GPUPipelineLayout createPipelineLayout(JSAny? map);
 
   external GPUBindGroup createBindGroup(JSAny? map);
+
+  external GPUTexture createTexture(JSAny? map);
 }
 
 @JS()

@@ -103,6 +103,11 @@ enum ResourceLayoutObject {
   texture,
 }
 
+enum SampleCount {
+  one,
+  four,
+}
+
 final class DeviceBuffer {
   DeviceBuffer._(this._device, this._buffer, this.lengthInBytes);
 
@@ -197,7 +202,12 @@ final class Context {
       'format': selectedFormat.name,
     }.jsify());
 
-    return CanvasSwapchain._(canvasContext, canvas, selectedFormat);
+    return CanvasSwapchain._(
+      canvasContext,
+      canvas,
+      selectedFormat,
+      this,
+    );
   }
 
   DeviceBuffer createDeviceBuffer({
@@ -252,15 +262,15 @@ final class Context {
     }.jsify());
   }
 
-  GPURenderPipeline createRenderPipeline({
-    String? label,
-    required GPUShaderModule module,
-    required String fragmentEntrypoint,
-    required String vertexEntrypoint,
-    required List<VertexLayoutDescriptor> layouts,
-    required GPUPipelineLayout pipelineLayout,
-    required TextureFormat format,
-  }) {
+  GPURenderPipeline createRenderPipeline(
+      {String? label,
+      required GPUShaderModule module,
+      required String fragmentEntrypoint,
+      required String vertexEntrypoint,
+      required List<VertexLayoutDescriptor> layouts,
+      required GPUPipelineLayout pipelineLayout,
+      required TextureFormat format,
+      required SampleCount sampleCount}) {
     return _device.createRenderPipeline({
       'label': label,
       'layout': pipelineLayout,
@@ -291,6 +301,24 @@ final class Context {
           },
         ],
       },
+      'multisample': {
+        'count': sampleCount == SampleCount.one ? '1' : '4',
+      }
+    }.jsify());
+  }
+
+  GPUTexture createTexture({
+    required TextureFormat format,
+    required SampleCount sampleCount,
+    required int width,
+    required int height,
+    required int usage,
+  }) {
+    return _device.createTexture({
+      'size': [width, height],
+      'sampleCount': sampleCount == SampleCount.one ? 1 : 4,
+      'format': format.name,
+      'usage': usage,
     }.jsify());
   }
 }
@@ -307,6 +335,7 @@ enum LoadOP {
 
 enum StoreOp {
   store,
+  discard,
 }
 
 final class AttachmentDescriptor {
@@ -357,6 +386,8 @@ final class CommandBuffer {
             'loadOp': desc.loadOp.name,
             'storeOp': desc.storeOp.name,
             'view': desc.renderTarget.createView(),
+            if (desc.renderTarget.resolve != null)
+              'resolveTarget': desc.renderTarget.resolve!.createView(),
           },
       ],
     }.jsify()));
@@ -417,9 +448,11 @@ final class RenderTarget {
     required this.format,
     required this.width,
     required this.height,
+    required this.resolve,
   });
 
   final GPUTexture texture;
+  final GPUTexture? resolve;
   final TextureFormat format;
   final int width;
   final int height;
@@ -427,23 +460,44 @@ final class RenderTarget {
   GPUTextureView createView() {
     return texture.createView();
   }
+
+  void dispose() {
+    texture.destroy();
+    resolve?.destroy();
+  }
 }
 
 final class CanvasSwapchain {
-  CanvasSwapchain._(this._context, this._canvas, this.format);
+  CanvasSwapchain._(
+    this._canvasContext,
+    this._canvas,
+    this.format,
+    this._context,
+  );
 
-  final GPUCanvasContext _context;
+  final GPUCanvasContext _canvasContext;
   final HTMLCanvas _canvas;
+  final Context _context;
 
   /// The format of all render targets created by this swapchain.
   final TextureFormat format;
 
   RenderTarget createNext() {
+    var width = _canvas.width.toDartInt;
+    var height = _canvas.height.toDartInt;
+    final GPUTexture msaaTex = _context.createTexture(
+      width: width,
+      height: height,
+      sampleCount: SampleCount.four,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      format: format,
+    );
     return RenderTarget(
       format: format,
-      texture: _context.getCurrentTexture(),
-      width: _canvas.width.toDartInt,
-      height: _canvas.height.toDartInt,
+      texture: msaaTex,
+      resolve: _canvasContext.getCurrentTexture(),
+      width: width,
+      height: height,
     );
   }
 }

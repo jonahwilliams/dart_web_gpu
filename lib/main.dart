@@ -20,13 +20,14 @@ void main(List<String> args) async {
     var onscreenTarget = swapchain.createNext();
     var commandBuffer =
         context.createCommandBuffer(label: 'Test Command buffer');
+
     var renderPass = commandBuffer.createRenderPass(
       label: 'Test Render Pass',
       attachments: [
         AttachmentDescriptor(
           clearColor: (0.0, 0.0, 0.0, 0.0),
           loadOp: LoadOP.clear,
-          storeOp: StoreOp.store,
+          storeOp: StoreOp.discard,
           renderTarget: onscreenTarget,
         )
       ],
@@ -37,10 +38,13 @@ void main(List<String> args) async {
     canvas.drawRect(10, 10, 40, 40, (0.0, 1.0, 0.0, 1.0));
     canvas.drawRect(100, 100, 200, 200, (0.0, 1.0, 1.0, 1.0));
     canvas.translate(40, 40);
+    canvas.scale(2, 2);
     canvas.drawCircle(20, 20, 40, (1.0, 0.0, 0.0, 1.0));
 
     renderPass.end();
     commandBuffer.submit();
+    onscreenTarget.dispose();
+
     requestAnimationFrame((double _) {
       render();
     }.toJS);
