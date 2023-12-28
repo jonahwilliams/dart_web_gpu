@@ -91,8 +91,8 @@ class Tessellator {
 
     /// Precompute all relative points and angles for a fixed geometry size.
     var elapsedAngle = 0.0;
-    var angleTable = List.filled(totalPoints, (0.0, 0.0));
-    for (var i = 0; i < totalPoints; i++) {
+    var angleTable = List.filled(divisions, (0.0, 0.0));
+    for (var i = 0; i < divisions; i++) {
       angleTable[i] =
           (math.cos(elapsedAngle) * radius, math.sin(elapsedAngle) * radius);
       elapsedAngle += radianStep;
@@ -115,7 +115,7 @@ class Tessellator {
     results[l++] = pt2.$1;
     results[l++] = pt2.$2;
 
-    for (var j = 0; j < totalPoints - 3; j++) {
+    for (var j = 0; j < divisions - 3; j++) {
       results[l++] = origin.$1;
       results[l++] = origin.$2;
       results[l++] = pt2.$1;
@@ -227,8 +227,9 @@ class Canvas {
 
     var uniformData = Float32List(24);
     var offset = 0;
+    var appliedTransform = orthographic * currentTransform;
     for (var i = 0; i < 16; i++) {
-      uniformData[offset++] = currentTransform.storage[i];
+      uniformData[offset++] = appliedTransform.storage[i];
     }
 
     uniformData[offset++] = color.$1;

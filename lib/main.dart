@@ -36,8 +36,8 @@ void main(List<String> args) async {
     canvas.drawRect(0, 0, 20, 20, (1.0, 0.0, 0.0, 1.0));
     canvas.drawRect(10, 10, 40, 40, (0.0, 1.0, 0.0, 1.0));
     canvas.drawRect(100, 100, 200, 200, (0.0, 1.0, 1.0, 1.0));
-    // canvas.translate(40, 40);
-    //  canvas.drawCircle(20, 20, 5, (1.0, 0.0, 0.0, 1.0));
+    canvas.translate(40, 40);
+    canvas.drawCircle(20, 20, 40, (1.0, 0.0, 0.0, 1.0));
 
     renderPass.end();
     commandBuffer.submit();
