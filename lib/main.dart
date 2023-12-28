@@ -34,12 +34,15 @@ void main(List<String> args) async {
     );
     var canvas = Canvas(contentContext, renderPass, 800, 800);
 
-    canvas.drawRect(0, 0, 20, 20, (1.0, 0.0, 0.0, 1.0));
-    canvas.drawRect(10, 10, 40, 40, (0.0, 1.0, 0.0, 1.0));
-    canvas.drawRect(100, 100, 200, 200, (0.0, 1.0, 1.0, 1.0));
+    canvas.drawRect(0, 0, 400, 400, Paint()..color = (1.0, 0.0, 0.0, 1.0));
+    canvas.drawRect(10, 10, 40, 40, Paint()..color = (0.0, 1.0, 0.0, 1.0));
+    canvas.drawRect(100, 100, 200, 200, Paint()..color = (0.0, 0.0, 1.0, 1.0));
+    canvas.save();
     canvas.translate(40, 40);
     canvas.scale(2, 2);
-    canvas.drawCircle(20, 20, 40, (1.0, 0.0, 0.0, 1.0));
+    canvas.drawCircle(20, 20, 40, Paint()..color = (1.0, 0.0, 0.0, 0.5));
+    canvas.restore();
+    canvas.drawRect(50, 50, 240, 240, Paint()..color = (1.0, 1.0, 0.0, 1.0) ..mode = BlendMode.src);
 
     renderPass.end();
     commandBuffer.submit();

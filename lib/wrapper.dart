@@ -200,6 +200,9 @@ final class Context {
     canvasContext.configure({
       'device': _device,
       'format': selectedFormat.name,
+      'alphaMode': 'premultiplied',
+      'colorspace': 'srgb',
+      'usage': GPUTextureUsage.RENDER_ATTACHMENT,
     }.jsify());
 
     return CanvasSwapchain._(
@@ -270,8 +273,9 @@ final class Context {
       required List<VertexLayoutDescriptor> layouts,
       required GPUPipelineLayout pipelineLayout,
       required TextureFormat format,
-      required SampleCount sampleCount}) {
-    return _device.createRenderPipeline({
+      required SampleCount sampleCount,
+      required BlendMode blendMode}) {
+    var data = {
       'label': label,
       'layout': pipelineLayout,
       'vertex': {
@@ -298,13 +302,26 @@ final class Context {
         'targets': [
           {
             'format': format.name,
+            'blend': {
+              'alpha': {
+                'operation': blendMode.alphaOp.name,
+                'srcFactor': blendMode.srcAlphaBlendFactor.toGPUString(),
+                'dstFactor': blendMode.dstAlphaBlendFactor.toGPUString(),
+              },
+              'color': {
+                'operation': blendMode.colorOp.name,
+                'srcFactor': blendMode.srcColorBlendFactor.toGPUString(),
+                'dstFactor': blendMode.dstColorBlendFactor.toGPUString(),
+              },
+            }
           },
         ],
       },
       'multisample': {
         'count': sampleCount == SampleCount.one ? '1' : '4',
       }
-    }.jsify());
+    };
+    return _device.createRenderPipeline(data.jsify());
   }
 
   GPUTexture createTexture({
@@ -521,4 +538,99 @@ final class BufferBindGroup extends BindGroupResource {
       'size': view.size,
     }.jsify();
   }
+}
+
+enum BlendMode {
+  clear(BlendOperation.add, BlendOperation.add, BlendFactor.zero,
+      BlendFactor.zero, BlendFactor.zero, BlendFactor.zero),
+  src(BlendOperation.add, BlendOperation.add, BlendFactor.zero,
+      BlendFactor.zero, BlendFactor.one, BlendFactor.one),
+  dst(BlendOperation.add, BlendOperation.add, BlendFactor.one, BlendFactor.one,
+      BlendFactor.zero, BlendFactor.zero),
+
+  srcOver(BlendOperation.add, BlendOperation.add, BlendFactor.zero,
+      BlendFactor.oneMinusSrcAlpha, BlendFactor.one, BlendFactor.srcAlpha);
+
+  // Not added yet.
+  // dst(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // srcOver(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // dstOver(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // srcIn(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // dstIn(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // srcOut(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // dstOut(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // srcATop(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // dstATop(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // xor(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // plus(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),
+  // modulate(BlendOperation.add, BlendFactor.zero, BlendFactor.zero);
+
+  const BlendMode(
+      this.colorOp,
+      this.alphaOp,
+      this.dstAlphaBlendFactor,
+      this.dstColorBlendFactor,
+      this.srcAlphaBlendFactor,
+      this.srcColorBlendFactor);
+
+  final BlendOperation colorOp;
+  final BlendOperation alphaOp;
+  final BlendFactor dstAlphaBlendFactor;
+  final BlendFactor dstColorBlendFactor;
+  final BlendFactor srcAlphaBlendFactor;
+  final BlendFactor srcColorBlendFactor;
+}
+
+enum BlendFactor {
+  zero,
+  one,
+  src,
+  oneMinusSrc,
+  srcAlpha,
+  oneMinusSrcAlpha,
+  dst,
+  oneMinusDst,
+  dstAlpha,
+  oneMinusDstAlpha,
+  srcAlphaSaturated,
+  constant,
+  oneMinusConstant,
+}
+
+extension on BlendFactor {
+  String toGPUString() {
+    switch (this) {
+      case BlendFactor.zero:
+        return 'zero';
+      case BlendFactor.one:
+        return 'one';
+      case BlendFactor.src:
+        return 'src';
+      case BlendFactor.oneMinusSrc:
+        return 'one-minus-src';
+      case BlendFactor.srcAlpha:
+        return 'src-alpha';
+      case BlendFactor.oneMinusSrcAlpha:
+        return 'one-minus-src-alpha';
+      case BlendFactor.dst:
+        return 'dst';
+      case BlendFactor.oneMinusDst:
+        return 'one-minus-dst';
+      case BlendFactor.dstAlpha:
+        return 'dst-alpha';
+      case BlendFactor.oneMinusDstAlpha:
+        return 'one-minus-dst-alpha';
+      case BlendFactor.srcAlphaSaturated:
+        return 'src-alpha-saturated';
+      case BlendFactor.constant:
+        return 'constant';
+      case BlendFactor.oneMinusConstant:
+        return 'one-minus-constant';
+    }
+  }
+}
+
+enum BlendOperation {
+  add,
+  subtract,
 }

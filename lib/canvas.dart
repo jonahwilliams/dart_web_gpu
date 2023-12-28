@@ -14,7 +14,14 @@ class ContentContext {
 
   final Context context;
 
-  late final PipelineAndLayout solidColorPipeline;
+  final Map<BlendMode, PipelineAndLayout> _solidColorPipeline =
+      <BlendMode, PipelineAndLayout>{};
+
+  PipelineAndLayout getSolidColorPipeline({
+    required BlendMode blendMode,
+  }) {
+    return _solidColorPipeline[blendMode]!;
+  }
 
   void _init(TextureFormat format) {
     var bindGroupLayout = context.createBindGroupLayout(entries: [
@@ -30,11 +37,7 @@ class ContentContext {
     ]);
     var pipelineLayout =
         context.createPipelineLayout(layouts: [bindGroupLayout]);
-
-    var pipeline = context.createRenderPipeline(
-      pipelineLayout: pipelineLayout,
-      sampleCount: SampleCount.four,
-      module: context.createShaderModule(code: '''
+    var module = context.createShaderModule(code: '''
 struct UniformData {
   mvp: mat4x4<f32>,
   color: vec4f,
@@ -53,25 +56,33 @@ fn vertexMain(@location(0) pos: vec2f) ->
 fn fragmentMain() -> @location(0) vec4f {
   return uniform_data.color;
 }
-  '''),
-      label: 'Rect Shader',
-      vertexEntrypoint: 'vertexMain',
-      fragmentEntrypoint: 'fragmentMain',
-      format: format,
-      layouts: [
-        (
-          arrayStride: 8,
-          attributes: [
-            (
-              format: ShaderType.float32x2,
-              offset: 0,
-              shaderLocation: 0, // Position, see vertex shader
-            )
-          ],
-        ),
-      ],
-    );
-    solidColorPipeline = (pipeline, bindGroupLayout);
+  ''');
+
+    for (var mode in BlendMode.values) {
+      var pipeline = context.createRenderPipeline(
+        pipelineLayout: pipelineLayout,
+        sampleCount: SampleCount.four,
+        blendMode: mode,
+        module: module,
+        label: 'Rect Shader ${mode.name}',
+        vertexEntrypoint: 'vertexMain',
+        fragmentEntrypoint: 'fragmentMain',
+        format: format,
+        layouts: [
+          (
+            arrayStride: 8,
+            attributes: [
+              (
+                format: ShaderType.float32x2,
+                offset: 0,
+                shaderLocation: 0, // Position, see vertex shader
+              )
+            ],
+          ),
+        ],
+      );
+      _solidColorPipeline[mode] = (pipeline, bindGroupLayout);
+    }
   }
 }
 
@@ -166,7 +177,7 @@ class Canvas {
   ];
 
   void drawRect(
-      double left, double top, double right, double bottom, RGBAColor color) {
+      double left, double top, double right, double bottom, Paint paint) {
     var hostData = Float32List(12);
     var offset = 0;
     hostData[offset++] = left;
@@ -195,27 +206,28 @@ class Canvas {
       uniformData[offset++] = currentTransform.storage[i];
     }
 
-    uniformData[offset++] = color.$1;
-    uniformData[offset++] = color.$2;
-    uniformData[offset++] = color.$3;
-    uniformData[offset++] = color.$4;
+    uniformData[offset++] = paint.color.$1 * paint.color.$4;
+    uniformData[offset++] = paint.color.$2 * paint.color.$4;
+    uniformData[offset++] = paint.color.$3 * paint.color.$4;
+    uniformData[offset++] = paint.color.$4;
 
     var uniformDeviceBuffer = _context.context
         .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
     uniformDeviceBuffer.update(uniformData);
     var uniformView = uniformDeviceBuffer.asView();
 
+    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
     var bindGroup = _context.context.createBindGroup(
-        layout: _context.solidColorPipeline.$2,
+        layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
 
-    _pass.setPipeline(_context.solidColorPipeline.$1);
+    _pass.setPipeline(pipeline.$1);
     _pass.setVertexBuffer(0, view);
     _pass.setBindGroup(0, bindGroup);
     _pass.draw(6);
   }
 
-  void drawCircle(double x, double y, double radius, RGBAColor color) {
+  void drawCircle(double x, double y, double radius, Paint paint) {
     var currentTransform = transformStack.last;
     var tessellateResults = Tessellator.tessellateCircle(
         x, y, radius, currentTransform.getMaxScaleOnAxis());
@@ -233,21 +245,22 @@ class Canvas {
       uniformData[offset++] = appliedTransform.storage[i];
     }
 
-    uniformData[offset++] = color.$1;
-    uniformData[offset++] = color.$2;
-    uniformData[offset++] = color.$3;
-    uniformData[offset++] = color.$4;
+    uniformData[offset++] = paint.color.$1 * paint.color.$4;
+    uniformData[offset++] = paint.color.$2 * paint.color.$4;
+    uniformData[offset++] = paint.color.$3 * paint.color.$4;
+    uniformData[offset++] = paint.color.$4;
 
     var uniformDeviceBuffer = _context.context
         .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
     uniformDeviceBuffer.update(uniformData);
     var uniformView = uniformDeviceBuffer.asView();
 
+    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
     var bindGroup = _context.context.createBindGroup(
-        layout: _context.solidColorPipeline.$2,
+        layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
     _pass.setVertexBuffer(0, view);
-    _pass.setPipeline(_context.solidColorPipeline.$1);
+    _pass.setPipeline(pipeline.$1);
     _pass.setBindGroup(0, bindGroup);
     _pass.draw(vertexCount);
   }
@@ -271,4 +284,9 @@ class Canvas {
   void scale(double dx, double dy) {
     transformStack.last.scale(dx, dy);
   }
+}
+
+class Paint {
+  RGBAColor color = (0, 0, 0, 0);
+  BlendMode mode = BlendMode.srcOver;
 }
