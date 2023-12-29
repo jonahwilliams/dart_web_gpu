@@ -8,13 +8,44 @@ import 'dart:math' as math;
 typedef PipelineAndLayout = (GPURenderPipeline, GPUBindGroupLayout);
 
 class ContentContext {
-  ContentContext(this.context, TextureFormat format) {
-    _init(format);
+  ContentContext(this.context, this._format) {
+    _initSolidColor(_format);
+    _initTexture(_format);
   }
 
+  final TextureFormat _format;
   final Context context;
 
+  RenderTarget createOffscreenTarget({
+    required int width,
+    required int height,
+  }) {
+    var msaaTex = context.createTexture(
+      format: _format,
+      sampleCount: SampleCount.four,
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    );
+    var resolveTex = context.createTexture(
+      format: _format,
+      sampleCount: SampleCount.one,
+      width: width,
+      height: height,
+      usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    );
+    return RenderTarget(
+        texture: msaaTex,
+        format: _format,
+        width: width,
+        height: height,
+        resolve: resolveTex);
+  }
+
   final Map<BlendMode, PipelineAndLayout> _solidColorPipeline =
+      <BlendMode, PipelineAndLayout>{};
+  final Map<BlendMode, PipelineAndLayout> _textureFillPipeline =
       <BlendMode, PipelineAndLayout>{};
 
   PipelineAndLayout getSolidColorPipeline({
@@ -23,7 +54,104 @@ class ContentContext {
     return _solidColorPipeline[blendMode]!;
   }
 
-  void _init(TextureFormat format) {
+  PipelineAndLayout getTextureFillPipeline({
+    required BlendMode blendMode,
+  }) {
+    return _textureFillPipeline[blendMode]!;
+  }
+
+  void _initTexture(TextureFormat format) {
+    var bindGroupLayout = context.createBindGroupLayout(entries: [
+      BindGroupLayoutEntry(
+        visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+        binding: 0,
+        buffer: (
+          hasDynamicOffset: false,
+          minBindingSize: 0,
+          type: BufferLayoutType.uniform,
+        ),
+      ),
+      BindGroupLayoutEntry(
+        visibility: GPUShaderStage.FRAGMENT,
+        binding: 1,
+        texture: (multisampled: false),
+      ),
+      BindGroupLayoutEntry(
+        visibility: GPUShaderStage.FRAGMENT,
+        binding: 2,
+        sampler: (),
+      ),
+    ]);
+    var pipelineLayout =
+        context.createPipelineLayout(layouts: [bindGroupLayout]);
+    var module = context.createShaderModule(code: '''
+struct UniformData {
+  mvp: mat4x4<f32>,
+  alpha: f32,
+};
+
+@group(0) @binding(0)
+var<uniform> uniform_data: UniformData;
+
+@group(0) @binding(1)
+var texture0: texture_2d<f32>;
+
+@group(0) @binding(2)
+var sampler0: sampler;
+
+struct VertexOut {
+  @builtin(position) position: vec4f,
+  @location(1) uvs: vec2f,
+};
+
+@vertex
+fn vertexMain(@location(0) pos: vec2f, @location(1) uvs: vec2f) ->
+  VertexOut {
+  var out: VertexOut;
+  out.position = uniform_data.mvp * vec4f(pos, 0, 1);
+  out.uvs = uvs;
+  return out;
+}
+
+@fragment
+fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
+  return textureSample(texture0, sampler0, in.uvs) * uniform_data.alpha;
+}
+  ''');
+
+    for (var mode in BlendMode.values) {
+      var pipeline = context.createRenderPipeline(
+        pipelineLayout: pipelineLayout,
+        sampleCount: SampleCount.four,
+        blendMode: mode,
+        module: module,
+        label: 'Texture Shader ${mode.name}',
+        vertexEntrypoint: 'vertexMain',
+        fragmentEntrypoint: 'fragmentMain',
+        format: format,
+        layouts: [
+          (
+            arrayStride: 16,
+            attributes: [
+              (
+                format: ShaderType.float32x2,
+                offset: 0,
+                shaderLocation: 0,
+              ),
+              (
+                format: ShaderType.float32x2,
+                offset: 8,
+                shaderLocation: 1,
+              )
+            ],
+          ),
+        ],
+      );
+      _textureFillPipeline[mode] = (pipeline, bindGroupLayout);
+    }
+  }
+
+  void _initSolidColor(TextureFormat format) {
     var bindGroupLayout = context.createBindGroupLayout(entries: [
       BindGroupLayoutEntry(
         visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
@@ -163,18 +291,27 @@ Matrix4 makeOrthograpgic(int width, int height) {
   return translate * scale;
 }
 
+class _CanvasStack {
+  _CanvasStack(this.pass, this.transform,
+      [this.saveLayer, this.buffer, this.bounds]);
+
+  final RenderPass pass;
+  final CommandBuffer? buffer;
+  final Matrix4 transform;
+  final Paint? saveLayer;
+  final (double, double, double, double)? bounds;
+}
+
 class Canvas {
-  Canvas(this._context, this._pass, this.width, this.height)
-      : orthographic = makeOrthograpgic(width, height);
+  Canvas(this._context, RenderPass pass, this.width, this.height)
+      : orthographic = makeOrthograpgic(width, height),
+        _stack = [_CanvasStack(pass, Matrix4.identity())];
 
   final int width;
   final int height;
   final ContentContext _context;
-  final RenderPass _pass;
   final Matrix4 orthographic;
-  final List<Matrix4> transformStack = [
-    Matrix4.identity(),
-  ];
+  final List<_CanvasStack> _stack;
 
   void drawRect(
       double left, double top, double right, double bottom, Paint paint) {
@@ -201,7 +338,7 @@ class Canvas {
 
     var uniformData = Float32List(24);
     offset = 0;
-    var currentTransform = orthographic * transformStack.last;
+    var currentTransform = orthographic * _stack.last.transform;
     for (var i = 0; i < 16; i++) {
       uniformData[offset++] = currentTransform.storage[i];
     }
@@ -221,14 +358,15 @@ class Canvas {
         layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
 
-    _pass.setPipeline(pipeline.$1);
-    _pass.setVertexBuffer(0, view);
-    _pass.setBindGroup(0, bindGroup);
-    _pass.draw(6);
+    var pass = _stack.last.pass;
+    pass.setPipeline(pipeline.$1);
+    pass.setVertexBuffer(0, view);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6);
   }
 
   void drawCircle(double x, double y, double radius, Paint paint) {
-    var currentTransform = transformStack.last;
+    var currentTransform = _stack.last.transform;
     var tessellateResults = Tessellator.tessellateCircle(
         x, y, radius, currentTransform.getMaxScaleOnAxis());
     var vertexCount = tessellateResults.length ~/ 2;
@@ -259,30 +397,148 @@ class Canvas {
     var bindGroup = _context.context.createBindGroup(
         layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
-    _pass.setVertexBuffer(0, view);
-    _pass.setPipeline(pipeline.$1);
-    _pass.setBindGroup(0, bindGroup);
-    _pass.draw(vertexCount);
+
+    var pass = _stack.last.pass;
+    pass.setVertexBuffer(0, view);
+    pass.setPipeline(pipeline.$1);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(vertexCount);
+  }
+
+  void drawTexture(double left, double top, double right, double bottom,
+      Paint paint, GPUTextureView textureView) {
+    var hostData = Float32List(24);
+    var offset = 0;
+    hostData[offset++] = left;
+    hostData[offset++] = top;
+    hostData[offset++] = 0;
+    hostData[offset++] = 0;
+
+    hostData[offset++] = right;
+    hostData[offset++] = top;
+    hostData[offset++] = 1;
+    hostData[offset++] = 0;
+
+    hostData[offset++] = left;
+    hostData[offset++] = bottom;
+    hostData[offset++] = 0;
+    hostData[offset++] = 1;
+
+    hostData[offset++] = left;
+    hostData[offset++] = bottom;
+    hostData[offset++] = 0;
+    hostData[offset++] = 1;
+
+    hostData[offset++] = right;
+    hostData[offset++] = top;
+    hostData[offset++] = 1;
+    hostData[offset++] = 0;
+
+    hostData[offset++] = right;
+    hostData[offset++] = bottom;
+    hostData[offset++] = 1;
+    hostData[offset++] = 1;
+
+    var deviceBuffer = _context.context
+        .createDeviceBuffer(lengthInBytes: hostData.lengthInBytes);
+    deviceBuffer.update(hostData);
+    var view = deviceBuffer.asView();
+
+    var uniformData = Float32List(24);
+    offset = 0;
+    var currentTransform = orthographic * _stack.last.transform;
+    for (var i = 0; i < 16; i++) {
+      uniformData[offset++] = currentTransform.storage[i];
+    }
+    uniformData[offset++] = paint.color.$4;
+
+    var uniformDeviceBuffer = _context.context
+        .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
+    uniformDeviceBuffer.update(uniformData);
+    var uniformView = uniformDeviceBuffer.asView();
+
+    var pipeline = _context.getTextureFillPipeline(blendMode: paint.mode);
+    var bindGroup = _context.context.createBindGroup(
+      layout: pipeline.$2,
+      entries: [
+        (binding: 0, resource: BufferBindGroup(uniformView)),
+        (binding: 1, resource: TextureBindGroup(textureView)),
+        (
+          binding: 2,
+          resource: SamplerBindGroup(
+            _context.context.createSampler(
+              addressModeWidth: AddressMode.clampToEdge,
+              addressModeHeight: AddressMode.clampToEdge,
+              magFitler: MagFitler.nearest,
+            ),
+          )
+        ),
+      ],
+    );
+
+    var pass = _stack.last.pass;
+    pass.setPipeline(pipeline.$1);
+    pass.setVertexBuffer(0, view);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6);
   }
 
   void save() {
-    var newMatrix = transformStack.last.clone();
-    transformStack.add(newMatrix);
+    var newMatrix = _stack.last.transform.clone();
+    _stack.add(_CanvasStack(_stack.last.pass, newMatrix, null, null));
   }
 
   void restore() {
-    if (transformStack.length == 1) {
-      return;
+    if (_stack.length == 1) {
+      throw Exception();
     }
-    transformStack.removeLast();
+    var last = _stack.removeLast();
+    if (last.saveLayer != null) {
+      last.pass.end();
+      last.buffer!.submit();
+      var renderTarget = last.pass.getColorAttachment().renderTarget;
+      drawTexture(last.bounds!.$1, last.bounds!.$2, last.bounds!.$3,
+          last.bounds!.$4, last.saveLayer!, renderTarget.resolve!.createView());
+      //renderTarget.dispose();
+    }
   }
 
   void translate(double dx, double dy) {
-    transformStack.last.translate(dx, dy);
+    _stack.last.transform.translate(dx, dy);
   }
 
   void scale(double dx, double dy) {
-    transformStack.last.scale(dx, dy);
+    _stack.last.transform.scale(dx, dy);
+  }
+
+  void saveLayer(double l, double t, double r, double b, Paint paint) {
+    var newMatrix = _stack.last.transform.clone();
+
+    var width = (r - l).ceil();
+    var height = (b - t).ceil();
+
+    var commandBuffer =
+        _context.context.createCommandBuffer(label: 'Save Layer');
+    var renderPass = commandBuffer.createRenderPass(
+      label: 'Offscreen Render Pass',
+      attachments: [
+        AttachmentDescriptor(
+          clearColor: (0.0, 0.0, 0.0, 0.0),
+          loadOp: LoadOP.clear,
+          storeOp: StoreOp.discard,
+          renderTarget:
+              _context.createOffscreenTarget(width: width, height: height),
+        )
+      ],
+    );
+
+    _stack.add(_CanvasStack(
+        renderPass, newMatrix, paint, commandBuffer, (l, t, r, b)));
+  }
+
+
+  void dispose() {
+
   }
 }
 

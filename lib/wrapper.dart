@@ -108,6 +108,40 @@ enum SampleCount {
   four,
 }
 
+enum AddressMode {
+  /// The texture coordinates are clamped between 0.0 and 1.0, inclusive.
+  clampToEdge,
+
+  /// The texture coordinates wrap to the other side of the texture.
+  repeat,
+
+  /// The texture coordinates wrap to the other side of the texture, but the texture is flipped when the integer part of the coordinate is odd
+  mirrorRepeat,
+
+  /// WHERE IS CLAMP TO BORDER?
+}
+
+extension on AddressMode {
+  String toGPUString() {
+    switch (this) {
+      case AddressMode.clampToEdge:
+        return 'clamp-to-edge';
+      case AddressMode.repeat:
+        return 'repeat';
+      case AddressMode.mirrorRepeat:
+        return 'mirror-repeat';
+    }
+  }
+}
+
+enum MagFitler {
+  /// Return the value of the texel nearest to the texture coordinates.
+  nearest,
+
+  /// Select two texels in each dimension and return a linear interpolation between their values.
+  linear,
+}
+
 final class DeviceBuffer {
   DeviceBuffer._(this._device, this._buffer, this.lengthInBytes);
 
@@ -249,7 +283,11 @@ final class Context {
               'sampler': {
                 'type': 'filtering',
               },
-            // TODO: other types
+            if (entry.texture != null)
+              'texture': {
+                'multisampled': false,
+                'sampleType': 'float',
+              },
           },
       ],
     }.jsify());
@@ -324,6 +362,17 @@ final class Context {
     return _device.createRenderPipeline(data.jsify());
   }
 
+  GPUSampler createSampler({
+    required AddressMode addressModeWidth,
+    required AddressMode addressModeHeight,
+    required MagFitler magFitler,
+  }) {
+    return _device.createSampler({
+      'addressModeU': addressModeWidth.toGPUString(),
+      'addressModeV': addressModeHeight.toGPUString(),
+    }.jsify());
+  }
+
   GPUTexture createTexture({
     required TextureFormat format,
     required SampleCount sampleCount,
@@ -389,25 +438,28 @@ final class CommandBuffer {
           'Invalid RenderPass description, required at least one attachment.');
     }
 
-    return RenderPass._(_encoder.beginRenderPass({
-      'label': label,
-      'colorAttachments': [
-        for (var desc in attachments)
-          {
-            'clearValue': [
-              desc.clearColor.$1,
-              desc.clearColor.$2,
-              desc.clearColor.$3,
-              desc.clearColor.$4
-            ],
-            'loadOp': desc.loadOp.name,
-            'storeOp': desc.storeOp.name,
-            'view': desc.renderTarget.createView(),
-            if (desc.renderTarget.resolve != null)
-              'resolveTarget': desc.renderTarget.resolve!.createView(),
-          },
-      ],
-    }.jsify()));
+    return RenderPass._(
+      _encoder.beginRenderPass({
+        'label': label,
+        'colorAttachments': [
+          for (var desc in attachments)
+            {
+              'clearValue': [
+                desc.clearColor.$1,
+                desc.clearColor.$2,
+                desc.clearColor.$3,
+                desc.clearColor.$4
+              ],
+              'loadOp': desc.loadOp.name,
+              'storeOp': desc.storeOp.name,
+              'view': desc.renderTarget.createView(),
+              if (desc.renderTarget.resolve != null)
+                'resolveTarget': desc.renderTarget.resolve!.createView(),
+            },
+        ],
+      }.jsify()),
+      attachments,
+    );
   }
 
   void submit() {
@@ -417,10 +469,15 @@ final class CommandBuffer {
 }
 
 final class RenderPass {
-  RenderPass._(this._renderPass);
+  RenderPass._(this._renderPass, this._attachments);
 
   final GPURenderPass _renderPass;
+  final List<AttachmentDescriptor> _attachments;
   bool _debugIsEnded = false;
+
+  AttachmentDescriptor getColorAttachment() {
+    return _attachments.single;
+  }
 
   void setPipeline(GPURenderPipeline pipeline) {
     assert(!_debugIsEnded);
@@ -537,6 +594,28 @@ final class BufferBindGroup extends BindGroupResource {
       'offset': view.offset,
       'size': view.size,
     }.jsify();
+  }
+}
+
+final class SamplerBindGroup extends BindGroupResource {
+  const SamplerBindGroup(this.sampler);
+
+  final GPUSampler sampler;
+
+  @override
+  JSAny? toJS() {
+    return sampler.jsify();
+  }
+}
+
+final class TextureBindGroup extends BindGroupResource {
+  const TextureBindGroup(this.textureView);
+
+  final GPUTextureView textureView;
+
+  @override
+  JSAny? toJS() {
+    return textureView.jsify();
   }
 }
 

@@ -85,6 +85,10 @@ extension ElementHelpers on Element {
 
 @JS()
 @staticInterop
+class GPUSampler {}
+
+@JS()
+@staticInterop
 class GPUContext {}
 
 extension GPUContextHelpers on GPUContext {
@@ -161,6 +165,8 @@ extension GPUDeviceHelpers on GPUDevice {
   external GPUBindGroup createBindGroup(JSAny? map);
 
   external GPUTexture createTexture(JSAny? map);
+
+  external GPUSampler createSampler(JSAny? map);
 }
 
 @JS()
