@@ -635,8 +635,14 @@ enum BlendMode {
   dst(BlendOperation.add, BlendOperation.add, BlendFactor.one, BlendFactor.one,
       BlendFactor.zero, BlendFactor.zero),
 
-  srcOver(BlendOperation.add, BlendOperation.add, BlendFactor.zero,
-      BlendFactor.oneMinusSrcAlpha, BlendFactor.one, BlendFactor.srcAlpha);
+  srcOver(
+    BlendOperation.add,
+    BlendOperation.add,
+    BlendFactor.oneMinusSrcAlpha,
+    BlendFactor.oneMinusSrcAlpha,
+    BlendFactor.one,
+    BlendFactor.one,
+  );
 
   // Not added yet.
   // dst(BlendOperation.add, BlendFactor.zero, BlendFactor.zero),

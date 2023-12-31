@@ -49,7 +49,7 @@ extension NavigatorHelpers on Navigator {
 
 @JS()
 @staticInterop
-external void requestAnimationFrame(JSFunction value);
+external JSNumber requestAnimationFrame(JSFunction value);
 
 /// GPU Types ///
 

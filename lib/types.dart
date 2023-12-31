@@ -46,6 +46,26 @@ final class Rect {
     return bottom - top;
   }
 
+  /// The top left corner of the rectangle.
+  Offset get topLeft {
+    return Offset(left, top);
+  }
+
+  /// The top right corner of the rectangle.
+  Offset get topRight {
+    return Offset(right, top);
+  }
+
+  /// The bottom left corner of the rectangle.
+  Offset get bottomLeft {
+    return Offset(left, bottom);
+  }
+
+  /// The bottom right corner of the rectangle.
+  Offset get bottomRight {
+    return Offset(right, bottom);
+  }
+
   /// Return the rounded up integral size of this rectangle.
   Size size() {
     return Size(width().ceil(), height().ceil());
@@ -89,6 +109,11 @@ final class Offset {
 
   Offset operator -(Offset other) {
     return Offset(dx - other.dx, dy - other.dy);
+  }
+
+  /// Scale each component of this offset by the value [s].
+  Offset scale(num s) {
+    return Offset(dx * s, dy * s);
   }
 }
 

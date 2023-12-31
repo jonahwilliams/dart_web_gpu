@@ -14,6 +14,47 @@ Matrix4 _makeOrthograpgic(Size size) {
   return translate * scale;
 }
 
+Offset _tranformPoint(Offset v, Matrix4 m) {
+  var w = v.dx * m[3] + v.dy * m[7] + m[15];
+  var result = Offset(v.dx * m[0] + v.dy * m[4] + m[12],
+                v.dx * m[1] + v.dy * m[5] + m[13]);
+
+  // This is Skia's behavior, but it may be reasonable to allow UB for the w=0
+  // case.
+  if (w != 0) {
+    w = 1 / w;
+  }
+  return result.scale(w);
+}
+
+
+Rect _computeTransformedBounds(Matrix4 transform, Rect source) {
+  var a = _tranformPoint(source.topLeft, transform);
+  var b = _tranformPoint(source.topRight, transform);
+  var c = _tranformPoint(source.bottomLeft, transform);
+  var d = _tranformPoint(source.bottomRight, transform);
+  double minX = a.dx;
+  double minY = a.dy;
+  double maxX = a.dx;
+  double maxY = a.dy;
+
+  for (var pt in [b, c, d]) {
+    if (pt.dx < minX) {
+      minX = pt.dx;
+    } else if (pt.dx > maxX) {
+      maxX = pt.dx;
+    }
+
+    if (pt.dy < minY) {
+      minY = pt.dy;
+    } else if (pt.dy > maxY) {
+      maxY = pt.dy;
+    }
+  }
+
+  return Rect.fromLTRB(minX, minY, maxX, maxY);
+}
+
 /// The canvas class is the interface for recording drawing operations.
 /// As these operations are recorded, an intermediate data structure is built up.
 /// This data structure is later used to produce the render passes necessary to render
@@ -314,7 +355,7 @@ class Canvas {
             var commandBuffer =
                 _context.context.createCommandBuffer(label: 'Save Layer');
             var renderPass = commandBuffer.createRenderPass(
-              label: 'Onscreen Render Pass',
+              label: 'Offscreen Render Pass',
               size: childBounds.size(),
               attachments: [
                 AttachmentDescriptor(
@@ -357,8 +398,9 @@ class Paint {
 /// The following classes represent deferred drawing commands that are recorded by the canvas
 /// and then played back in order to render. Defering the execution of the rendering code is necessary as
 /// we don't necessarily know the correct sizes/bounds for the save layer textures until we've recorded all
-/// operations. Defering drawing also gives us an opportunity to apply optimizations (though this code doesn't do that yet), such as
-/// converting drawRect/drawPaint into the render pass clear color, or dropping drawing commands that won't have any impact on the final rendering (due to opacity).
+/// operations. Defering drawing also gives us an opportunity to apply optimizations
+/// (though this code doesn't do that yet), such as converting drawRect/drawPaint into the render pass
+/// clear color, or dropping drawing commands that won't have any impact on the final rendering (due to opacity).
 
 abstract base class DrawOp {
   DrawOp(this.transform);
@@ -382,6 +424,7 @@ final class BaseLayer extends DrawOp {
 
   @override
   Rect? computeBounds() {
+    /// Transform will always be identity.
     return bounds;
   }
 }
@@ -394,7 +437,7 @@ final class DrawRect extends DrawOp {
 
   @override
   Rect? computeBounds() {
-    return rect;
+    return _computeTransformedBounds(transform, rect);
   }
 }
 
@@ -406,7 +449,7 @@ final class DrawCircle extends DrawOp {
 
   @override
   Rect? computeBounds() {
-    return circle.computeBounds();
+    return _computeTransformedBounds(transform, circle.computeBounds());
   }
 }
 
@@ -449,6 +492,7 @@ final class SaveLayer extends DrawOp {
           }
           bounds = bounds!.union(childBounds);
         }
+        // TODO: do I need to transform these bounds? I don't think so.
         _cachedBounds = bounds;
       }
       _didCache = true;

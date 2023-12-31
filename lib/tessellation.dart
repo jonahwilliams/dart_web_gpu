@@ -65,6 +65,6 @@ class Tessellator {
     if (scaledRadius < 22.0) {
       return 34;
     }
-    return math.min(scaledRadius, 140.0).round();
+    return math.min(scaledRadius, 240.0).round();
   }
 }
