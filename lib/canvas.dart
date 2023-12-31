@@ -1,335 +1,92 @@
 import 'dart:typed_data';
 
 import 'browser.dart';
+import 'shaders.dart';
+import 'tessellation.dart';
+import 'types.dart';
 import 'wrapper.dart';
 import 'package:vector_math/vector_math.dart';
-import 'dart:math' as math;
 
-typedef PipelineAndLayout = (GPURenderPipeline, GPUBindGroupLayout);
-
-class ContentContext {
-  ContentContext(this.context, this._format) {
-    _initSolidColor(_format);
-    _initTexture(_format);
-  }
-
-  final TextureFormat _format;
-  final Context context;
-
-  RenderTarget createOffscreenTarget({
-    required int width,
-    required int height,
-  }) {
-    var msaaTex = context.createTexture(
-      format: _format,
-      sampleCount: SampleCount.four,
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    );
-    var resolveTex = context.createTexture(
-      format: _format,
-      sampleCount: SampleCount.one,
-      width: width,
-      height: height,
-      usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    );
-    return RenderTarget(
-        texture: msaaTex,
-        format: _format,
-        width: width,
-        height: height,
-        resolve: resolveTex);
-  }
-
-  final Map<BlendMode, PipelineAndLayout> _solidColorPipeline =
-      <BlendMode, PipelineAndLayout>{};
-  final Map<BlendMode, PipelineAndLayout> _textureFillPipeline =
-      <BlendMode, PipelineAndLayout>{};
-
-  PipelineAndLayout getSolidColorPipeline({
-    required BlendMode blendMode,
-  }) {
-    return _solidColorPipeline[blendMode]!;
-  }
-
-  PipelineAndLayout getTextureFillPipeline({
-    required BlendMode blendMode,
-  }) {
-    return _textureFillPipeline[blendMode]!;
-  }
-
-  void _initTexture(TextureFormat format) {
-    var bindGroupLayout = context.createBindGroupLayout(entries: [
-      BindGroupLayoutEntry(
-        visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-        binding: 0,
-        buffer: (
-          hasDynamicOffset: false,
-          minBindingSize: 0,
-          type: BufferLayoutType.uniform,
-        ),
-      ),
-      BindGroupLayoutEntry(
-        visibility: GPUShaderStage.FRAGMENT,
-        binding: 1,
-        texture: (multisampled: false),
-      ),
-      BindGroupLayoutEntry(
-        visibility: GPUShaderStage.FRAGMENT,
-        binding: 2,
-        sampler: (),
-      ),
-    ]);
-    var pipelineLayout =
-        context.createPipelineLayout(layouts: [bindGroupLayout]);
-    var module = context.createShaderModule(code: '''
-struct UniformData {
-  mvp: mat4x4<f32>,
-  alpha: f32,
-};
-
-@group(0) @binding(0)
-var<uniform> uniform_data: UniformData;
-
-@group(0) @binding(1)
-var texture0: texture_2d<f32>;
-
-@group(0) @binding(2)
-var sampler0: sampler;
-
-struct VertexOut {
-  @builtin(position) position: vec4f,
-  @location(1) uvs: vec2f,
-};
-
-@vertex
-fn vertexMain(@location(0) pos: vec2f, @location(1) uvs: vec2f) ->
-  VertexOut {
-  var out: VertexOut;
-  out.position = uniform_data.mvp * vec4f(pos, 0, 1);
-  out.uvs = uvs;
-  return out;
-}
-
-@fragment
-fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
-  return textureSample(texture0, sampler0, in.uvs) * uniform_data.alpha;
-}
-  ''');
-
-    for (var mode in BlendMode.values) {
-      var pipeline = context.createRenderPipeline(
-        pipelineLayout: pipelineLayout,
-        sampleCount: SampleCount.four,
-        blendMode: mode,
-        module: module,
-        label: 'Texture Shader ${mode.name}',
-        vertexEntrypoint: 'vertexMain',
-        fragmentEntrypoint: 'fragmentMain',
-        format: format,
-        layouts: [
-          (
-            arrayStride: 16,
-            attributes: [
-              (
-                format: ShaderType.float32x2,
-                offset: 0,
-                shaderLocation: 0,
-              ),
-              (
-                format: ShaderType.float32x2,
-                offset: 8,
-                shaderLocation: 1,
-              )
-            ],
-          ),
-        ],
-      );
-      _textureFillPipeline[mode] = (pipeline, bindGroupLayout);
-    }
-  }
-
-  void _initSolidColor(TextureFormat format) {
-    var bindGroupLayout = context.createBindGroupLayout(entries: [
-      BindGroupLayoutEntry(
-        visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-        binding: 0,
-        buffer: (
-          hasDynamicOffset: false,
-          minBindingSize: 0,
-          type: BufferLayoutType.uniform,
-        ),
-      )
-    ]);
-    var pipelineLayout =
-        context.createPipelineLayout(layouts: [bindGroupLayout]);
-    var module = context.createShaderModule(code: '''
-struct UniformData {
-  mvp: mat4x4<f32>,
-  color: vec4f,
-};
-
-@group(0) @binding(0)
-var<uniform> uniform_data: UniformData;
-
-@vertex
-fn vertexMain(@location(0) pos: vec2f) ->
-  @builtin(position) vec4f {
-  return uniform_data.mvp * vec4f(pos, 0, 1);
-}
-
-@fragment
-fn fragmentMain() -> @location(0) vec4f {
-  return uniform_data.color;
-}
-  ''');
-
-    for (var mode in BlendMode.values) {
-      var pipeline = context.createRenderPipeline(
-        pipelineLayout: pipelineLayout,
-        sampleCount: SampleCount.four,
-        blendMode: mode,
-        module: module,
-        label: 'Rect Shader ${mode.name}',
-        vertexEntrypoint: 'vertexMain',
-        fragmentEntrypoint: 'fragmentMain',
-        format: format,
-        layouts: [
-          (
-            arrayStride: 8,
-            attributes: [
-              (
-                format: ShaderType.float32x2,
-                offset: 0,
-                shaderLocation: 0, // Position, see vertex shader
-              )
-            ],
-          ),
-        ],
-      );
-      _solidColorPipeline[mode] = (pipeline, bindGroupLayout);
-    }
-  }
-}
-
-extension on (double, double) {
-  (double, double) operator +((double, double) other) {
-    return (this.$1 + other.$1, this.$2 + other.$2);
-  }
-}
-
-class Tessellator {
-  static Float32List tessellateCircle(
-      double x, double y, double radius, double scale) {
-    var divisions = computeDivisions(scale * radius);
-
-    var radianStep = (2 * math.pi) / divisions;
-    var totalPoints = 3 + (divisions - 3) * 3;
-    var results = Float32List(totalPoints * 2);
-
-    /// Precompute all relative points and angles for a fixed geometry size.
-    var elapsedAngle = 0.0;
-    var angleTable = List.filled(divisions, (0.0, 0.0));
-    for (var i = 0; i < divisions; i++) {
-      angleTable[i] =
-          (math.cos(elapsedAngle) * radius, math.sin(elapsedAngle) * radius);
-      elapsedAngle += radianStep;
-    }
-
-    var center = (x, y);
-
-    var origin = center + angleTable[0];
-
-    var l = 0;
-    results[l++] = origin.$1;
-    results[l++] = origin.$2;
-
-    var pt1 = center + angleTable[1];
-
-    results[l++] = pt1.$1;
-    results[l++] = pt1.$2;
-
-    var pt2 = center + angleTable[2];
-    results[l++] = pt2.$1;
-    results[l++] = pt2.$2;
-
-    for (var j = 0; j < divisions - 3; j++) {
-      results[l++] = origin.$1;
-      results[l++] = origin.$2;
-      results[l++] = pt2.$1;
-      results[l++] = pt2.$2;
-
-      pt2 = center + angleTable[j + 3];
-      results[l++] = pt2.$1;
-      results[l++] = pt2.$2;
-    }
-    return results;
-  }
-
-  static int computeDivisions(double scaledRadius) {
-    if (scaledRadius < 1.0) {
-      return 4;
-    }
-    if (scaledRadius < 2.0) {
-      return 8;
-    }
-    if (scaledRadius < 12.0) {
-      return 24;
-    }
-    if (scaledRadius < 22.0) {
-      return 34;
-    }
-    return math.min(scaledRadius, 140.0).round();
-  }
-}
-
-Matrix4 makeOrthograpgic(int width, int height) {
-  var scale = Matrix4.identity()..scale(2.0 / width, -2.0 / height, 0);
+Matrix4 _makeOrthograpgic(Size size) {
+  var scale = Matrix4.identity()
+    ..scale(2.0 / size.width, -2.0 / size.height, 0);
   var translate = Matrix4.identity()..translate(-1, 1.0, 0.5);
   return translate * scale;
 }
 
-class _CanvasStack {
-  _CanvasStack(this.pass, this.transform,
-      [this.saveLayer, this.buffer, this.bounds]);
-
-  final RenderPass pass;
-  final CommandBuffer? buffer;
-  final Matrix4 transform;
-  final Paint? saveLayer;
-  final (double, double, double, double)? bounds;
-}
-
+/// The canvas class is the interface for recording drawing operations.
+/// As these operations are recorded, an intermediate data structure is built up.
+/// This data structure is later used to produce the render passes necessary to render
+/// the recorded operations.
 class Canvas {
-  Canvas(this._context, RenderPass pass, this.width, this.height)
-      : orthographic = makeOrthograpgic(width, height),
-        _stack = [_CanvasStack(pass, Matrix4.identity())];
+  Canvas(this._context);
 
-  final int width;
-  final int height;
   final ContentContext _context;
-  final Matrix4 orthographic;
-  final List<_CanvasStack> _stack;
+  final List<Matrix4> _transformStack = <Matrix4>[
+    Matrix4.identity(),
+  ];
 
-  void drawRect(
-      double left, double top, double right, double bottom, Paint paint) {
+  DrawOp _currentNode = BaseLayer(Matrix4.identity());
+
+  void drawRect(Rect rect, Paint paint) {
+    var op = DrawRect(rect, paint, _transformStack.last.clone());
+    op.parent = _currentNode;
+    _currentNode.children.add(op);
+  }
+
+  void drawCircle(Circle circle, Paint paint) {
+    var op = DrawCircle(circle, paint, _transformStack.last.clone());
+    op.parent = _currentNode;
+    _currentNode.children.add(op);
+  }
+
+  void drawPaint(Paint paint) {
+    var op = DrawPaint(paint, _transformStack.last.clone());
+    op.parent = _currentNode;
+    _currentNode.children.add(op);
+  }
+
+  void save() {
+    var transform = _transformStack.last.clone();
+    _transformStack.add(transform);
+  }
+
+  void restore() {
+    _currentNode = _currentNode.parent!;
+
+    // Unclear what order this happens in.
+    _transformStack.removeLast();
+  }
+
+  void saveLayer(Paint paint) {
+    var op = SaveLayer(paint, _transformStack.last.clone());
+    op.parent = _currentNode;
+    _currentNode.children.add(op);
+    _currentNode = op;
+
+    // Unclear what order this happens in.
+    var transform = _transformStack.last.clone();
+    _transformStack.add(transform);
+  }
+
+  void _drawRect(DrawRect drawRect, RenderPass pass) {
+    var rect = drawRect.rect;
+    var paint = drawRect.paint;
     var hostData = Float32List(12);
     var offset = 0;
-    hostData[offset++] = left;
-    hostData[offset++] = top;
-    hostData[offset++] = right;
-    hostData[offset++] = top;
-    hostData[offset++] = left;
-    hostData[offset++] = bottom;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.top;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.top;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.bottom;
 
-    hostData[offset++] = left;
-    hostData[offset++] = bottom;
-    hostData[offset++] = right;
-    hostData[offset++] = top;
-    hostData[offset++] = right;
-    hostData[offset++] = bottom;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.bottom;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.top;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.bottom;
 
     var deviceBuffer = _context.context
         .createDeviceBuffer(lengthInBytes: hostData.lengthInBytes);
@@ -338,7 +95,7 @@ class Canvas {
 
     var uniformData = Float32List(24);
     offset = 0;
-    var currentTransform = orthographic * _stack.last.transform;
+    var currentTransform = _makeOrthograpgic(pass.size) * drawRect.transform;
     for (var i = 0; i < 16; i++) {
       uniformData[offset++] = currentTransform.storage[i];
     }
@@ -358,17 +115,19 @@ class Canvas {
         layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
 
-    var pass = _stack.last.pass;
     pass.setPipeline(pipeline.$1);
     pass.setVertexBuffer(0, view);
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
   }
 
-  void drawCircle(double x, double y, double radius, Paint paint) {
-    var currentTransform = _stack.last.transform;
+  void _drawCircle(DrawCircle drawCircle, RenderPass pass) {
+    var circle = drawCircle.circle;
+    var paint = drawCircle.paint;
+
+    var currentTransform = drawCircle.transform;
     var tessellateResults = Tessellator.tessellateCircle(
-        x, y, radius, currentTransform.getMaxScaleOnAxis());
+        circle, currentTransform.getMaxScaleOnAxis());
     var vertexCount = tessellateResults.length ~/ 2;
 
     var deviceBuffer = _context.context
@@ -378,7 +137,7 @@ class Canvas {
 
     var uniformData = Float32List(24);
     var offset = 0;
-    var appliedTransform = orthographic * currentTransform;
+    var appliedTransform = _makeOrthograpgic(pass.size) * currentTransform;
     for (var i = 0; i < 16; i++) {
       uniformData[offset++] = appliedTransform.storage[i];
     }
@@ -398,44 +157,44 @@ class Canvas {
         layout: pipeline.$2,
         entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
 
-    var pass = _stack.last.pass;
     pass.setVertexBuffer(0, view);
     pass.setPipeline(pipeline.$1);
     pass.setBindGroup(0, bindGroup);
     pass.draw(vertexCount);
   }
 
-  void drawTexture(double left, double top, double right, double bottom,
-      Paint paint, GPUTextureView textureView) {
+  // only valid if srcRect == dstRect
+  void _drawTexture(Rect rect, Paint paint, GPUTextureView textureView,
+      RenderPass pass, Matrix4 transform) {
     var hostData = Float32List(24);
     var offset = 0;
-    hostData[offset++] = left;
-    hostData[offset++] = top;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.top;
     hostData[offset++] = 0;
     hostData[offset++] = 0;
 
-    hostData[offset++] = right;
-    hostData[offset++] = top;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.top;
     hostData[offset++] = 1;
     hostData[offset++] = 0;
 
-    hostData[offset++] = left;
-    hostData[offset++] = bottom;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.bottom;
     hostData[offset++] = 0;
     hostData[offset++] = 1;
 
-    hostData[offset++] = left;
-    hostData[offset++] = bottom;
+    hostData[offset++] = rect.left;
+    hostData[offset++] = rect.bottom;
     hostData[offset++] = 0;
     hostData[offset++] = 1;
 
-    hostData[offset++] = right;
-    hostData[offset++] = top;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.top;
     hostData[offset++] = 1;
     hostData[offset++] = 0;
 
-    hostData[offset++] = right;
-    hostData[offset++] = bottom;
+    hostData[offset++] = rect.right;
+    hostData[offset++] = rect.bottom;
     hostData[offset++] = 1;
     hostData[offset++] = 1;
 
@@ -446,7 +205,7 @@ class Canvas {
 
     var uniformData = Float32List(24);
     offset = 0;
-    var currentTransform = orthographic * _stack.last.transform;
+    var currentTransform = _makeOrthograpgic(pass.size) * transform;
     for (var i = 0; i < 16; i++) {
       uniformData[offset++] = currentTransform.storage[i];
     }
@@ -476,73 +235,225 @@ class Canvas {
       ],
     );
 
-    var pass = _stack.last.pass;
     pass.setPipeline(pipeline.$1);
     pass.setVertexBuffer(0, view);
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
   }
 
-  void save() {
-    var newMatrix = _stack.last.transform.clone();
-    _stack.add(_CanvasStack(_stack.last.pass, newMatrix, null, null));
-  }
-
-  void restore() {
-    if (_stack.length == 1) {
-      throw Exception();
-    }
-    var last = _stack.removeLast();
-    if (last.saveLayer != null) {
-      last.pass.end();
-      last.buffer!.submit();
-      var renderTarget = last.pass.getColorAttachment().renderTarget;
-      drawTexture(last.bounds!.$1, last.bounds!.$2, last.bounds!.$3,
-          last.bounds!.$4, last.saveLayer!, renderTarget.resolve!.createView());
-      //renderTarget.dispose();
-    }
-  }
-
   void translate(double dx, double dy) {
-    _stack.last.transform.translate(dx, dy);
+    _transformStack.last.translate(dx, dy);
   }
 
   void scale(double dx, double dy) {
-    _stack.last.transform.scale(dx, dy);
+    _transformStack.last.scale(dx, dy);
   }
 
-  void saveLayer(double l, double t, double r, double b, Paint paint) {
-    var newMatrix = _stack.last.transform.clone();
+  void dispatch(RenderTarget target) {
+    DrawOp rootNode = _currentNode;
+    while (rootNode.parent != null) {
+      rootNode = rootNode.parent!;
+    }
 
-    var width = (r - l).ceil();
-    var height = (b - t).ceil();
+    // First, the root node is always sized to the provided render target, i.e. the screen,
+    // so we don't need to compute bounds first. All offscreen or child composition must have
+    // bounds computed beforehand however.
+    var baseNode = (rootNode as BaseLayer);
+    baseNode.bounds =
+        Rect.fromLTRB(0, 0, target.width.toDouble(), target.height.toDouble());
 
     var commandBuffer =
         _context.context.createCommandBuffer(label: 'Save Layer');
     var renderPass = commandBuffer.createRenderPass(
-      label: 'Offscreen Render Pass',
+      label: 'Onscreen Render Pass',
+      size: Size(target.width, target.height),
       attachments: [
         AttachmentDescriptor(
           clearColor: (0.0, 0.0, 0.0, 0.0),
           loadOp: LoadOP.clear,
           storeOp: StoreOp.discard,
-          renderTarget:
-              _context.createOffscreenTarget(width: width, height: height),
+          renderTarget: target,
         )
       ],
     );
 
-    _stack.add(_CanvasStack(
-        renderPass, newMatrix, paint, commandBuffer, (l, t, r, b)));
+    var result = _renderSubpass(target, renderPass, baseNode, baseNode.bounds!);
+
+    renderPass.end();
+    commandBuffer.submit();
+
+    for (var texture in result.textures) {
+      texture.destroy();
+    }
   }
 
+  SubmitResult _renderSubpass(
+      RenderTarget target, RenderPass pass, DrawOp node, Rect bounds) {
+    var result = SubmitResult();
+    for (var child in node.children) {
+      switch (child) {
+        case DrawRect():
+          {
+            _drawRect(child, pass);
+          }
+        case DrawCircle():
+          {
+            _drawCircle(child, pass);
+          }
+        case DrawPaint(paint: var paint, transform: var transform):
+          {
+            _drawRect(DrawRect(bounds, paint, transform), pass);
+          }
+        case SaveLayer(paint: var paint, transform: var transform):
+          {
+            // This child requires compositing, recurse and produce a texture view.
+            var childBounds = child.computeBounds() ?? bounds;
+            var offscreenTarget = _context.createOffscreenTarget(
+                width: childBounds.width().ceil(),
+                height: childBounds.height().ceil());
+            var commandBuffer =
+                _context.context.createCommandBuffer(label: 'Save Layer');
+            var renderPass = commandBuffer.createRenderPass(
+              label: 'Onscreen Render Pass',
+              size: childBounds.size(),
+              attachments: [
+                AttachmentDescriptor(
+                  clearColor: (0.0, 0.0, 0.0, 0.0),
+                  loadOp: LoadOP.clear,
+                  storeOp: StoreOp.discard,
+                  renderTarget: offscreenTarget,
+                )
+              ],
+            );
+            _renderSubpass(offscreenTarget, renderPass, child, childBounds);
+            renderPass.end();
+            commandBuffer.submit();
 
-  void dispose() {
+            _drawTexture(childBounds, paint,
+                offscreenTarget.resolve!.createView(), pass, transform);
 
+            result.buffers.add(commandBuffer);
+            result.textures.add(offscreenTarget.texture);
+            result.textures.add(offscreenTarget.resolve!);
+          }
+      }
+    }
+    return result;
   }
+
+  void dispose() {}
+}
+
+class SubmitResult {
+  final List<CommandBuffer> buffers = <CommandBuffer>[];
+  final List<GPUTexture> textures = <GPUTexture>[];
 }
 
 class Paint {
   RGBAColor color = (0, 0, 0, 0);
   BlendMode mode = BlendMode.srcOver;
+}
+
+/// The following classes represent deferred drawing commands that are recorded by the canvas
+/// and then played back in order to render. Defering the execution of the rendering code is necessary as
+/// we don't necessarily know the correct sizes/bounds for the save layer textures until we've recorded all
+/// operations. Defering drawing also gives us an opportunity to apply optimizations (though this code doesn't do that yet), such as
+/// converting drawRect/drawPaint into the render pass clear color, or dropping drawing commands that won't have any impact on the final rendering (due to opacity).
+
+abstract base class DrawOp {
+  DrawOp(this.transform);
+
+  final Matrix4 transform;
+
+  DrawOp? parent;
+
+  List<DrawOp> get children => const [];
+
+  Rect? computeBounds();
+}
+
+final class BaseLayer extends DrawOp {
+  BaseLayer(super.transform);
+
+  @override
+  final List<DrawOp> children = <DrawOp>[];
+
+  Rect? bounds;
+
+  @override
+  Rect? computeBounds() {
+    return bounds;
+  }
+}
+
+final class DrawRect extends DrawOp {
+  DrawRect(this.rect, this.paint, super.transform);
+
+  final Rect rect;
+  final Paint paint;
+
+  @override
+  Rect? computeBounds() {
+    return rect;
+  }
+}
+
+final class DrawCircle extends DrawOp {
+  DrawCircle(this.circle, this.paint, super.transform);
+
+  final Circle circle;
+  final Paint paint;
+
+  @override
+  Rect? computeBounds() {
+    return circle.computeBounds();
+  }
+}
+
+final class DrawPaint extends DrawOp {
+  DrawPaint(this.paint, super.transform);
+
+  final Paint paint;
+
+  /// Draw paint is unbounded and increases the current
+  /// save layer size to the maximum.
+  @override
+  Rect? computeBounds() {
+    return null;
+  }
+}
+
+final class SaveLayer extends DrawOp {
+  SaveLayer(this.paint, super.transform);
+
+  final Paint paint;
+  Rect? _cachedBounds;
+  bool _didCache = false;
+
+  @override
+  List<DrawOp> children = <DrawOp>[];
+
+  /// Save bounds is the union of all child op bounds.
+  @override
+  Rect? computeBounds() {
+    if (!_didCache) {
+      if (children.isEmpty) {
+        _cachedBounds = Rect.empty;
+      } else {
+        Rect? bounds = Rect.empty;
+        for (var i = 0; i < children.length; i++) {
+          var childBounds = children[i].computeBounds();
+          if (childBounds == null) {
+            bounds = null;
+            break;
+          }
+          bounds = bounds!.union(childBounds);
+        }
+        _cachedBounds = bounds;
+      }
+      _didCache = true;
+    }
+
+    return _cachedBounds;
+  }
 }

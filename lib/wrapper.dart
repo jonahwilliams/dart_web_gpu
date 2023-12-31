@@ -3,6 +3,11 @@ import 'dart:typed_data';
 
 import 'package:dart_web_gpu/browser.dart';
 
+import 'types.dart';
+
+/// This library provides wrappers over the browser WebGPU types to allow the APIs to be
+/// more Dart-y and high level. many of the record types are just placeholders.
+
 typedef VertexLayoutDescriptor = ({
   int arrayStride,
   List<VertexLayoutAttribute> attributes
@@ -431,6 +436,7 @@ final class CommandBuffer {
 
   RenderPass createRenderPass({
     required List<AttachmentDescriptor> attachments,
+    required Size size,
     String? label,
   }) {
     if (attachments.isEmpty) {
@@ -458,6 +464,7 @@ final class CommandBuffer {
             },
         ],
       }.jsify()),
+      size,
       attachments,
     );
   }
@@ -469,8 +476,9 @@ final class CommandBuffer {
 }
 
 final class RenderPass {
-  RenderPass._(this._renderPass, this._attachments);
+  RenderPass._(this._renderPass, this.size, this._attachments);
 
+  final Size size;
   final GPURenderPass _renderPass;
   final List<AttachmentDescriptor> _attachments;
   bool _debugIsEnded = false;
