@@ -35,16 +35,17 @@ void main(List<String> args) async {
     var onscreenTarget = swapchain!.createNext();
     var canvas = Canvas(contentContext!);
 
-   // canvas.drawPaint(Paint()..color = (1.0, 0.5, 0.2, 1.0));
-    canvas.saveLayer(Paint()..color = (0, 0, 0, 0.5));
-    canvas.translate(100, 100);
-    canvas.drawRect(
-        Rect.fromLTRB(0, 0, 100, 100), Paint()..color = (1.0, 0.0, 0.0, 1.0));
-    canvas.drawRect(
-        Rect.fromLTRB(50, 50, 150, 150), Paint()..color = (0.0, 1.0, 0.0, 1.0));
-    canvas.restore();
-    canvas.drawCircle(
-        Circle(Offset(200, 200), 400), Paint()..color = (0, 0, 1.0, 0.2));
+    var builder = PathBuilder()
+      ..moveTo(Offset(10, 10))
+      ..lineTo(Offset(20, 10))
+      ..lineTo(Offset(30, 20))
+      ..lineTo(Offset(40, 10))
+      ..quadraticBezierTo(Offset(0, 0), Offset(20, -10))
+      ..close();
+    var path = builder.takePath();
+
+    canvas.translate(400, 400);
+    canvas.drawPath(path, Paint()..color = (1.0, 0.0, 0.0, 1.0));
 
     canvas.dispatch(onscreenTarget);
 

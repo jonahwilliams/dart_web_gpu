@@ -125,6 +125,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
         vertexEntrypoint: 'vertexMain',
         fragmentEntrypoint: 'fragmentMain',
         format: format,
+        primitiveTopology: PrimitiveTopology.triangles,
         layouts: [
           (
             arrayStride: 16,
@@ -192,6 +193,7 @@ fn fragmentMain() -> @location(0) vec4f {
         vertexEntrypoint: 'vertexMain',
         fragmentEntrypoint: 'fragmentMain',
         format: format,
+        primitiveTopology: PrimitiveTopology.triangleStrip,
         layouts: [
           (
             arrayStride: 8,

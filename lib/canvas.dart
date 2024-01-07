@@ -16,8 +16,8 @@ Matrix4 _makeOrthograpgic(Size size) {
 
 Offset _tranformPoint(Offset v, Matrix4 m) {
   var w = v.dx * m[3] + v.dy * m[7] + m[15];
-  var result = Offset(v.dx * m[0] + v.dy * m[4] + m[12],
-                v.dx * m[1] + v.dy * m[5] + m[13]);
+  var result = Offset(
+      v.dx * m[0] + v.dy * m[4] + m[12], v.dx * m[1] + v.dy * m[5] + m[13]);
 
   // This is Skia's behavior, but it may be reasonable to allow UB for the w=0
   // case.
@@ -26,7 +26,6 @@ Offset _tranformPoint(Offset v, Matrix4 m) {
   }
   return result.scale(w);
 }
-
 
 Rect _computeTransformedBounds(Matrix4 transform, Rect source) {
   var a = _tranformPoint(source.topLeft, transform);
@@ -71,6 +70,12 @@ class Canvas {
 
   void drawRect(Rect rect, Paint paint) {
     var op = DrawRect(rect, paint, _transformStack.last.clone());
+    op.parent = _currentNode;
+    _currentNode.children.add(op);
+  }
+
+  void drawPath(Path path, Paint paint) {
+    var op = DrawPath(path, paint, _transformStack.last.clone());
     op.parent = _currentNode;
     _currentNode.children.add(op);
   }
@@ -169,6 +174,48 @@ class Canvas {
     var currentTransform = drawCircle.transform;
     var tessellateResults = Tessellator.tessellateCircle(
         circle, currentTransform.getMaxScaleOnAxis());
+    var vertexCount = tessellateResults.length ~/ 2;
+
+    var deviceBuffer = _context.context
+        .createDeviceBuffer(lengthInBytes: tessellateResults.lengthInBytes);
+    deviceBuffer.update(tessellateResults);
+    var view = deviceBuffer.asView();
+
+    var uniformData = Float32List(24);
+    var offset = 0;
+    var appliedTransform = _makeOrthograpgic(pass.size) * currentTransform;
+    for (var i = 0; i < 16; i++) {
+      uniformData[offset++] = appliedTransform.storage[i];
+    }
+
+    uniformData[offset++] = paint.color.$1 * paint.color.$4;
+    uniformData[offset++] = paint.color.$2 * paint.color.$4;
+    uniformData[offset++] = paint.color.$3 * paint.color.$4;
+    uniformData[offset++] = paint.color.$4;
+
+    var uniformDeviceBuffer = _context.context
+        .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
+    uniformDeviceBuffer.update(uniformData);
+    var uniformView = uniformDeviceBuffer.asView();
+
+    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
+    var bindGroup = _context.context.createBindGroup(
+        layout: pipeline.$2,
+        entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
+
+    pass.setVertexBuffer(0, view);
+    pass.setPipeline(pipeline.$1);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(vertexCount);
+  }
+
+  void _drawPath(DrawPath drawPath, RenderPass pass) {
+    var path = drawPath.path;
+    var paint = drawPath.paint;
+
+    var currentTransform = drawPath.transform;
+    var tessellateResults = Tessellator.tesselateFilledPath(
+        path, currentTransform.getMaxScaleOnAxis());
     var vertexCount = tessellateResults.length ~/ 2;
 
     var deviceBuffer = _context.context
@@ -337,6 +384,10 @@ class Canvas {
           {
             _drawRect(child, pass);
           }
+        case DrawPath():
+          {
+            _drawPath(child, pass);
+          }
         case DrawCircle():
           {
             _drawCircle(child, pass);
@@ -438,6 +489,18 @@ final class DrawRect extends DrawOp {
   @override
   Rect? computeBounds() {
     return _computeTransformedBounds(transform, rect);
+  }
+}
+
+final class DrawPath extends DrawOp {
+  DrawPath(this.path, this.paint, super.transform);
+
+  final Path path;
+  final Paint paint;
+
+  @override
+  Rect? computeBounds() {
+    return _computeTransformedBounds(transform, path.bounds);
   }
 }
 

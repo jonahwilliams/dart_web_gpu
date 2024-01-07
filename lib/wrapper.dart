@@ -113,6 +113,22 @@ enum SampleCount {
   four,
 }
 
+enum PrimitiveTopology {
+  triangles,
+  triangleStrip,
+}
+
+extension PrimitiveTopologyHelpers on PrimitiveTopology {
+  String toGPUString() {
+    switch (this) {
+      case PrimitiveTopology.triangles:
+        return 'triangle-list';
+      case PrimitiveTopology.triangleStrip:
+        return 'triangle-strip';
+    }
+  }
+}
+
 enum AddressMode {
   /// The texture coordinates are clamped between 0.0 and 1.0, inclusive.
   clampToEdge,
@@ -317,7 +333,9 @@ final class Context {
       required GPUPipelineLayout pipelineLayout,
       required TextureFormat format,
       required SampleCount sampleCount,
-      required BlendMode blendMode}) {
+      required BlendMode blendMode,
+      required PrimitiveTopology primitiveTopology,
+    }) {
     var data = {
       'label': label,
       'layout': pipelineLayout,
@@ -362,6 +380,9 @@ final class Context {
       },
       'multisample': {
         'count': sampleCount == SampleCount.one ? '1' : '4',
+      },
+      'primitive': {
+        'topology': primitiveTopology.toGPUString(),
       }
     };
     return _device.createRenderPipeline(data.jsify());
