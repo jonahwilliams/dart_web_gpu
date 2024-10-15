@@ -7,6 +7,7 @@ class ContentContext {
   ContentContext(this.context, this._format) {
     _initSolidColor(_format);
     _initTexture(_format);
+    _initGradient(_format);
   }
 
   final TextureFormat _format;
@@ -39,21 +40,26 @@ class ContentContext {
         resolve: resolveTex);
   }
 
-  final Map<BlendMode, PipelineAndLayout> _solidColorPipeline =
-      <BlendMode, PipelineAndLayout>{};
-  final Map<BlendMode, PipelineAndLayout> _textureFillPipeline =
-      <BlendMode, PipelineAndLayout>{};
+  final List<PipelineAndLayout> _solidColorPipeline = <PipelineAndLayout>[];
+  final List<PipelineAndLayout> _textureFillPipeline = <PipelineAndLayout>[];
+  final List<PipelineAndLayout> _linearGradientPipeline = <PipelineAndLayout>[];
 
   PipelineAndLayout getSolidColorPipeline({
     required BlendMode blendMode,
   }) {
-    return _solidColorPipeline[blendMode]!;
+    return _solidColorPipeline[blendMode.index];
   }
 
   PipelineAndLayout getTextureFillPipeline({
     required BlendMode blendMode,
   }) {
-    return _textureFillPipeline[blendMode]!;
+    return _textureFillPipeline[blendMode.index];
+  }
+
+  PipelineAndLayout getLinearGradientPipeline({
+    required BlendMode blendMode,
+  }) {
+    return _linearGradientPipeline[blendMode.index];
   }
 
   void _initTexture(TextureFormat format) {
@@ -144,7 +150,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
           ),
         ],
       );
-      _textureFillPipeline[mode] = (pipeline, bindGroupLayout);
+      _textureFillPipeline.add((pipeline, bindGroupLayout));
     }
   }
 
@@ -154,7 +160,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
         visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
         binding: 0,
         buffer: (
-          hasDynamicOffset: false,
+          hasDynamicOffset: true,
           minBindingSize: 0,
           type: BufferLayoutType.uniform,
         ),
@@ -207,7 +213,87 @@ fn fragmentMain() -> @location(0) vec4f {
           ),
         ],
       );
-      _solidColorPipeline[mode] = (pipeline, bindGroupLayout);
+      _solidColorPipeline.add((pipeline, bindGroupLayout));
+    }
+  }
+
+  void _initGradient(TextureFormat format) {
+    var bindGroupLayout = context.createBindGroupLayout(entries: [
+      BindGroupLayoutEntry(
+        visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+        binding: 0,
+        buffer: (
+          hasDynamicOffset: false,
+          minBindingSize: 0,
+          type: BufferLayoutType.uniform,
+        ),
+      )
+    ]);
+    var pipelineLayout =
+        context.createPipelineLayout(layouts: [bindGroupLayout]);
+    var module = context.createShaderModule(code: '''
+struct UniformData {
+  mvp: mat4x4<f32>,
+  color_start: vec4f,
+  color_end: vec4f,
+  start_end: vec4f,
+};
+
+@group(0) @binding(0)
+var<uniform> uniform_data: UniformData;
+
+
+struct VertexOut {
+  @builtin(position) position: vec4f,
+  @location(1) shader_pos: vec2f,
+};
+
+
+@vertex
+fn vertexMain(@location(0) pos: vec2f) -> VertexOut {
+  var out: VertexOut;
+  out.position = uniform_data.mvp * vec4f(pos, 0, 1);
+  out.shader_pos = pos;
+  return out;
+}
+
+
+@fragment
+fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
+  var start = uniform_data.start_end.xy;
+  var end = uniform_data.start_end.zw;
+  var start_to_end: vec2f  = (end - start);
+  var start_to_pos: vec2f  = (in.shader_pos - start);
+  var t = dot(start_to_pos, start_to_end) / dot(start_to_end, start_to_end);
+  return mix(uniform_data.color_start, uniform_data.color_end, t);
+}
+  ''');
+
+    for (var mode in BlendMode.values) {
+      var pipeline = context.createRenderPipeline(
+        pipelineLayout: pipelineLayout,
+        sampleCount: SampleCount.four,
+        blendMode: mode,
+        module: module,
+        label: 'Rect Shader ${mode.name}',
+        vertexEntrypoint: 'vertexMain',
+        fragmentEntrypoint: 'fragmentMain',
+        format: format,
+        primitiveTopology: PrimitiveTopology.triangleStrip,
+        layouts: [
+          (
+            arrayStride: 8,
+            attributes: [
+              (
+                format: ShaderType.float32x2,
+                offset: 0,
+                shaderLocation: 0, // Position, see vertex shader
+              )
+            ],
+          ),
+        ],
+      );
+      _linearGradientPipeline.add((pipeline, bindGroupLayout));
     }
   }
 }

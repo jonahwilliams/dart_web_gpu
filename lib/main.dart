@@ -6,11 +6,11 @@ import 'package:dart_web_gpu/types.dart';
 import 'browser.dart';
 import 'shaders.dart';
 import 'wrapper.dart';
+import 'dart:math' as math;
 
 CanvasSwapchain? swapchain;
 ContentContext? contentContext;
 bool didInit = false;
-
 
 Future<void> _ontimeSetup() async {
   if (didInit) {
@@ -34,24 +34,24 @@ void main(List<String> args) async {
   void render() {
     var onscreenTarget = swapchain!.createNext();
     var canvas = Canvas(contentContext!);
+    var rand = math.Random();
+    const double size = 10;
 
-    var builder = PathBuilder()
-      ..moveTo(Offset(10, 10))
-      ..lineTo(Offset(20, 10))
-      ..lineTo(Offset(30, 20))
-      ..lineTo(Offset(40, 10))
-      ..quadraticBezierTo(Offset(0, 0), Offset(20, -10))
-      ..close();
-    var path = builder.takePath();
-
-    canvas.translate(400, 400);
-    canvas.drawPath(path, Paint()..color = (1.0, 0.0, 0.0, 1.0));
+    for (var x = 0.0; x < 1000; x += size) {
+      for (var y = 0.0; y < 1000; y += size) {
+        canvas.drawRect(
+            Rect.fromLTRB(x, y, x + size, y + size),
+            Paint()
+              ..color =
+                  (rand.nextDouble(), rand.nextDouble(), rand.nextDouble(), 1)
+              ..mode = BlendMode.src);
+      }
+    }
 
     canvas.dispatch(onscreenTarget);
-
     onscreenTarget.dispose();
 
-    requestAnimationFrame((double _) {
+    requestAnimationFrame((double ts) {
       render();
     }.toJS);
   }

@@ -7,11 +7,35 @@ import 'types.dart';
 import 'wrapper.dart';
 import 'package:vector_math/vector_math.dart';
 
+/// Translate this matrix by a [Vector3], [Vector4], or x,y,z
+Matrix4 translate(Matrix4 mat, double x, [double y = 0.0, double z = 0.0]) {
+  var storage = mat.storage;
+  double tx;
+  double ty;
+  double tz;
+  double tw = 1.0;
+  tx = x;
+  ty = y;
+  tz = z;
+  final t1 =
+      storage[0] * tx + storage[4] * ty + storage[8] * tz + storage[12] * tw;
+  final t2 =
+      storage[1] * tx + storage[5] * ty + storage[9] * tz + storage[13] * tw;
+  final t3 =
+      storage[2] * tx + storage[6] * ty + storage[10] * tz + storage[14] * tw;
+  final t4 =
+      storage[3] * tx + storage[7] * ty + storage[11] * tz + storage[15] * tw;
+  storage[12] = t1;
+  storage[13] = t2;
+  storage[14] = t3;
+  storage[15] = t4;
+  return mat;
+}
+
 Matrix4 _makeOrthograpgic(Size size) {
   var scale = Matrix4.identity()
     ..scale(2.0 / size.width, -2.0 / size.height, 0);
-  var translate = Matrix4.identity()..translate(-1, 1.0, 0.5);
-  return translate * scale;
+  return translate(Matrix4.identity(), -1, 1.0, 0.5) * scale;
 }
 
 Offset _tranformPoint(Offset v, Matrix4 m) {
@@ -59,7 +83,13 @@ Rect _computeTransformedBounds(Matrix4 transform, Rect source) {
 /// This data structure is later used to produce the render passes necessary to render
 /// the recorded operations.
 class Canvas {
-  Canvas(this._context);
+  Canvas(this._context)
+      : _uniformBuffer = _context.context.createDeviceBuffer(
+            lengthInBytes: kDeviceBufferSizeFloats * 4,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
+        _vertexBuffer = _context.context.createDeviceBuffer(
+            lengthInBytes: kDeviceBufferSizeFloats * 4,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
 
   final ContentContext _context;
   final List<Matrix4> _transformStack = <Matrix4>[
@@ -115,55 +145,113 @@ class Canvas {
     _transformStack.add(transform);
   }
 
+  Matrix4 currentTransform_ = Matrix4.identity();
+
+  static const kDeviceBufferSizeFloats = 1024 * 1024;
+
+  final Float32List _stagingBufferUniforms =
+      Float32List(kDeviceBufferSizeFloats);
+  final Float32List _stagingBufferVertexData =
+      Float32List(kDeviceBufferSizeFloats);
+
+  DeviceBuffer _uniformBuffer;
+  DeviceBuffer _vertexBuffer;
+  int _uniformOffset = 0;
+  int _vertexOffset = 0;
+
+  GPUBindGroup? solidBind;
+  Matrix4? _hackCacheTransform;
+  GPURenderPipeline? lastPipeline;
+
+  void _configuirePipeline(Paint paint, RenderPass pass, Matrix4 transform) {
+    // Flush Prev Buffer.
+    if (_uniformOffset + 64 > kDeviceBufferSizeFloats) {
+      _uniformBuffer.update(_stagingBufferUniforms, offset: 0);
+      _uniformBuffer = _context.context.createDeviceBuffer(
+          lengthInBytes: kDeviceBufferSizeFloats * 4,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      _uniformOffset = 0;
+      solidBind = null;
+    }
+
+    // Solid Color.
+    var uniformView =
+        _uniformBuffer.asView(offset: _uniformOffset * 4, size: 256);
+    var startOffset = _uniformOffset * 4;
+    Matrix4 currentTransform =
+        (_hackCacheTransform ??= (_makeOrthograpgic(pass.size) * transform));
+    // This is faster for some reason.
+    {
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[0];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[1];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[2];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[3];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[4];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[5];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[6];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[7];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[8];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[9];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[10];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[11];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[12];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[13];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[14];
+      _stagingBufferUniforms[_uniformOffset++] = currentTransform.storage[15];
+    }
+
+    _stagingBufferUniforms[_uniformOffset++] = paint.color.$1 * paint.color.$4;
+    _stagingBufferUniforms[_uniformOffset++] = paint.color.$2 * paint.color.$4;
+    _stagingBufferUniforms[_uniformOffset++] = paint.color.$3 * paint.color.$4;
+    _stagingBufferUniforms[_uniformOffset++] = paint.color.$4;
+    // Alignment
+    _uniformOffset += 44;
+
+    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
+
+    if (!identical(lastPipeline, pipeline.$1)) {
+      pass.setPipeline(pipeline.$1);
+      lastPipeline = pipeline.$1;
+    }
+    solidBind ??= _context.context.createFastBindGroup(
+        layout: pipeline.$2,
+        binding: 0,
+        resource: BufferBindGroup(uniformView));
+    pass.setBindGroup(0, solidBind!, startOffset);
+  }
+
   void _drawRect(DrawRect drawRect, RenderPass pass) {
     var rect = drawRect.rect;
     var paint = drawRect.paint;
-    var hostData = Float32List(12);
-    var offset = 0;
-    hostData[offset++] = rect.left;
-    hostData[offset++] = rect.top;
-    hostData[offset++] = rect.right;
-    hostData[offset++] = rect.top;
-    hostData[offset++] = rect.left;
-    hostData[offset++] = rect.bottom;
 
-    hostData[offset++] = rect.left;
-    hostData[offset++] = rect.bottom;
-    hostData[offset++] = rect.right;
-    hostData[offset++] = rect.top;
-    hostData[offset++] = rect.right;
-    hostData[offset++] = rect.bottom;
-
-    var deviceBuffer = _context.context
-        .createDeviceBuffer(lengthInBytes: hostData.lengthInBytes);
-    deviceBuffer.update(hostData);
-    var view = deviceBuffer.asView();
-
-    var uniformData = Float32List(24);
-    offset = 0;
-    var currentTransform = _makeOrthograpgic(pass.size) * drawRect.transform;
-    for (var i = 0; i < 16; i++) {
-      uniformData[offset++] = currentTransform.storage[i];
+    if (_vertexOffset + 64 > kDeviceBufferSizeFloats) {
+      _vertexBuffer.update(_stagingBufferVertexData, offset: 0);
+      _vertexBuffer = _context.context.createDeviceBuffer(
+          lengthInBytes: kDeviceBufferSizeFloats * 4,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
+      _vertexOffset = 0;
     }
 
-    uniformData[offset++] = paint.color.$1 * paint.color.$4;
-    uniformData[offset++] = paint.color.$2 * paint.color.$4;
-    uniformData[offset++] = paint.color.$3 * paint.color.$4;
-    uniformData[offset++] = paint.color.$4;
+    var vertexView = _vertexBuffer.asView(offset: _vertexOffset * 4, size: 256);
 
-    var uniformDeviceBuffer = _context.context
-        .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
-    uniformDeviceBuffer.update(uniformData);
-    var uniformView = uniformDeviceBuffer.asView();
+    _stagingBufferVertexData[_vertexOffset++] = rect.left;
+    _stagingBufferVertexData[_vertexOffset++] = rect.top;
+    _stagingBufferVertexData[_vertexOffset++] = rect.right;
+    _stagingBufferVertexData[_vertexOffset++] = rect.top;
+    _stagingBufferVertexData[_vertexOffset++] = rect.left;
+    _stagingBufferVertexData[_vertexOffset++] = rect.bottom;
 
-    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
-    var bindGroup = _context.context.createBindGroup(
-        layout: pipeline.$2,
-        entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
+    _stagingBufferVertexData[_vertexOffset++] = rect.left;
+    _stagingBufferVertexData[_vertexOffset++] = rect.bottom;
+    _stagingBufferVertexData[_vertexOffset++] = rect.right;
+    _stagingBufferVertexData[_vertexOffset++] = rect.top;
+    _stagingBufferVertexData[_vertexOffset++] = rect.right;
+    _stagingBufferVertexData[_vertexOffset++] = rect.bottom;
+    // Align to 256
+    _vertexOffset += (64 - 12);
 
-    pass.setPipeline(pipeline.$1);
-    pass.setVertexBuffer(0, view);
-    pass.setBindGroup(0, bindGroup);
+    _configuirePipeline(paint, pass, drawRect.transform);
+    pass.setVertexBuffer(0, vertexView);
     pass.draw(6);
   }
 
@@ -181,31 +269,8 @@ class Canvas {
     deviceBuffer.update(tessellateResults);
     var view = deviceBuffer.asView();
 
-    var uniformData = Float32List(24);
-    var offset = 0;
-    var appliedTransform = _makeOrthograpgic(pass.size) * currentTransform;
-    for (var i = 0; i < 16; i++) {
-      uniformData[offset++] = appliedTransform.storage[i];
-    }
-
-    uniformData[offset++] = paint.color.$1 * paint.color.$4;
-    uniformData[offset++] = paint.color.$2 * paint.color.$4;
-    uniformData[offset++] = paint.color.$3 * paint.color.$4;
-    uniformData[offset++] = paint.color.$4;
-
-    var uniformDeviceBuffer = _context.context
-        .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
-    uniformDeviceBuffer.update(uniformData);
-    var uniformView = uniformDeviceBuffer.asView();
-
-    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
-    var bindGroup = _context.context.createBindGroup(
-        layout: pipeline.$2,
-        entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
-
+    _configuirePipeline(paint, pass, drawCircle.transform);
     pass.setVertexBuffer(0, view);
-    pass.setPipeline(pipeline.$1);
-    pass.setBindGroup(0, bindGroup);
     pass.draw(vertexCount);
   }
 
@@ -223,31 +288,8 @@ class Canvas {
     deviceBuffer.update(tessellateResults);
     var view = deviceBuffer.asView();
 
-    var uniformData = Float32List(24);
-    var offset = 0;
-    var appliedTransform = _makeOrthograpgic(pass.size) * currentTransform;
-    for (var i = 0; i < 16; i++) {
-      uniformData[offset++] = appliedTransform.storage[i];
-    }
-
-    uniformData[offset++] = paint.color.$1 * paint.color.$4;
-    uniformData[offset++] = paint.color.$2 * paint.color.$4;
-    uniformData[offset++] = paint.color.$3 * paint.color.$4;
-    uniformData[offset++] = paint.color.$4;
-
-    var uniformDeviceBuffer = _context.context
-        .createDeviceBuffer(lengthInBytes: uniformData.lengthInBytes);
-    uniformDeviceBuffer.update(uniformData);
-    var uniformView = uniformDeviceBuffer.asView();
-
-    var pipeline = _context.getSolidColorPipeline(blendMode: paint.mode);
-    var bindGroup = _context.context.createBindGroup(
-        layout: pipeline.$2,
-        entries: [(binding: 0, resource: BufferBindGroup(uniformView))]);
-
+    _configuirePipeline(paint, pass, drawPath.transform);
     pass.setVertexBuffer(0, view);
-    pass.setPipeline(pipeline.$1);
-    pass.setBindGroup(0, bindGroup);
     pass.draw(vertexCount);
   }
 
@@ -364,8 +406,21 @@ class Canvas {
         )
       ],
     );
-
+    renderPass.setScissorRect(0, 0, target.width, target.height);
     var result = _renderSubpass(target, renderPass, baseNode, baseNode.bounds!);
+
+    if (_vertexOffset != 0) {
+      _vertexBuffer.update(_stagingBufferVertexData,
+          offset: 0, size: _vertexOffset * 4);
+      _vertexOffset = 0;
+    }
+    if (_uniformOffset != 0) {
+      _uniformBuffer.update(_stagingBufferUniforms,
+          offset: 0, size: _uniformOffset * 4);
+      _uniformOffset = 0;
+    }
+    solidBind = null;
+    lastPipeline = null;
 
     renderPass.end();
     commandBuffer.submit();
@@ -441,9 +496,17 @@ class SubmitResult {
   final List<GPUTexture> textures = <GPUTexture>[];
 }
 
+class LinearGradient {
+  RGBAColor start = (0, 0, 0, 0);
+  RGBAColor end = (0, 0, 0, 0);
+  Offset from = Offset.zero;
+  Offset to = Offset.zero;
+}
+
 class Paint {
   RGBAColor color = (0, 0, 0, 0);
   BlendMode mode = BlendMode.srcOver;
+  LinearGradient? gradient;
 }
 
 /// The following classes represent deferred drawing commands that are recorded by the canvas

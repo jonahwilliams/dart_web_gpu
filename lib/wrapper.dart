@@ -1,4 +1,5 @@
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:dart_web_gpu/browser.dart';
@@ -170,10 +171,11 @@ final class DeviceBuffer {
   final GPUBuffer _buffer;
   final int lengthInBytes;
 
-  void update(TypedData data, {int offset = 0}) {
+  void update(TypedData data, {int offset = 0, int size = -1}) {
     assert(data.lengthInBytes <= lengthInBytes);
     assert(data.lengthInBytes + offset <= lengthInBytes);
-    _device.queue.writeBuffer(_buffer, offset.toJS, data.buffer.toJS);
+    _device.queue.writeBuffer(_buffer, offset.toJS, data.buffer.toJS, 0.toJS,
+        size == -1 ? data.lengthInBytes.toJS : size.toJS);
   }
 
   static const int kWholeSize = -1;
@@ -194,7 +196,10 @@ final class BufferView {
 }
 
 final class Context {
-  Context._(this._device);
+  Context._(this._device) {
+    bindGroupArgs.setProperty('entries'.toJS, bindGroupEntires);
+    bindGroupEntires.setProperty(0.toJS, bindGroupEntry);
+  }
 
   final GPUDevice _device;
 
@@ -241,6 +246,33 @@ final class Context {
     }.jsify());
   }
 
+  JSObject bindGroupArgs = JSObject();
+  JSArray bindGroupEntires = JSArray();
+  JSObject bindGroupEntry = JSObject();
+  JSObject bufferBindGroup = JSObject();
+  final layoutKey = 'layout'.toJS;
+  final bindingKey = 'binding'.toJS;
+  final resourceKey = 'resource'.toJS;
+  final bufferKey = 'buffer'.toJS;
+  final offsetKey = 'offset'.toJS;
+  final sizeKey = 'size'.toJS;
+
+  GPUBindGroup createFastBindGroup({
+    required GPUBindGroupLayout layout,
+    required int binding,
+    required BufferBindGroup resource,
+  }) {
+    bindGroupArgs.setProperty(layoutKey, layout as JSAny?);
+    bindGroupEntry.setProperty(bindingKey, binding.toJS);
+    bufferBindGroup.setProperty(
+        bufferKey, resource.view.buffer._buffer as JSAny?);
+    bufferBindGroup.setProperty(offsetKey, resource.view.offset.toJS);
+    bufferBindGroup.setProperty(sizeKey, resource.view.size.toJS);
+
+    bindGroupEntry.setProperty(resourceKey, bufferBindGroup);
+    return _device.createBindGroup(bindGroupArgs);
+  }
+
   Future<CanvasSwapchain> createSwapchain(HTMLCanvas canvas) async {
     var canvasContext = canvas.getContext('webgpu'.toJS);
     var preferredFormat = navigator.gpu!.getPreferredCanvasFormat().toDart;
@@ -268,6 +300,10 @@ final class Context {
     );
   }
 
+  final JSObject _deviceBufferArgs = JSObject();
+  final _sizeArg = 'size'.toJS;
+  final _usageArg = 'usage'.toJS;
+
   DeviceBuffer createDeviceBuffer({
     required int lengthInBytes,
     int usage = GPUBufferUsage.VERTEX |
@@ -275,10 +311,9 @@ final class Context {
         GPUBufferUsage.INDEX |
         GPUBufferUsage.UNIFORM,
   }) {
-    var buffer = _device.createBuffer({
-      'size': lengthInBytes,
-      'usage': usage,
-    }.jsify());
+    _deviceBufferArgs.setProperty(_sizeArg, lengthInBytes.toJS);
+    _deviceBufferArgs.setProperty(_usageArg, usage.toJS);
+    var buffer = _device.createBuffer(_deviceBufferArgs);
     return DeviceBuffer._(_device, buffer, lengthInBytes);
   }
 
@@ -324,18 +359,18 @@ final class Context {
     }.jsify());
   }
 
-  GPURenderPipeline createRenderPipeline(
-      {String? label,
-      required GPUShaderModule module,
-      required String fragmentEntrypoint,
-      required String vertexEntrypoint,
-      required List<VertexLayoutDescriptor> layouts,
-      required GPUPipelineLayout pipelineLayout,
-      required TextureFormat format,
-      required SampleCount sampleCount,
-      required BlendMode blendMode,
-      required PrimitiveTopology primitiveTopology,
-    }) {
+  GPURenderPipeline createRenderPipeline({
+    String? label,
+    required GPUShaderModule module,
+    required String fragmentEntrypoint,
+    required String vertexEntrypoint,
+    required List<VertexLayoutDescriptor> layouts,
+    required GPUPipelineLayout pipelineLayout,
+    required TextureFormat format,
+    required SampleCount sampleCount,
+    required BlendMode blendMode,
+    required PrimitiveTopology primitiveTopology,
+  }) {
     var data = {
       'label': label,
       'layout': pipelineLayout,
@@ -465,7 +500,7 @@ final class CommandBuffer {
           'Invalid RenderPass description, required at least one attachment.');
     }
 
-    return RenderPass._(
+    var result = RenderPass._(
       _encoder.beginRenderPass({
         'label': label,
         'colorAttachments': [
@@ -488,11 +523,15 @@ final class CommandBuffer {
       size,
       attachments,
     );
+    return result;
   }
+
+  final JSArray _argArray = JSArray();
 
   void submit() {
     var commandBuffer = _encoder.finish();
-    _device.queue.submit([commandBuffer].jsify());
+    _argArray.setProperty(0.toJS, commandBuffer as JSAny);
+    _device.queue.submit(_argArray);
   }
 }
 
@@ -519,8 +558,15 @@ final class RenderPass {
         bufferView.offset.toJS, bufferView.size.toJS);
   }
 
-  void setBindGroup(int binding, GPUBindGroup group) {
-    _renderPass.setBindGroup(binding.toJS, group);
+  final JSArray _oneValueDynamicOffset = JSArray();
+
+  void setBindGroup(int binding, GPUBindGroup group, [int? dynamicOffset]) {
+    if (dynamicOffset != null) {
+      _oneValueDynamicOffset.setProperty(0.toJS, dynamicOffset.toJS);
+      _renderPass.setBindGroup(binding.toJS, group, _oneValueDynamicOffset);
+    } else {
+      _renderPass.setBindGroup(binding.toJS, group);
+    }
   }
 
   void draw(int vertexCount) {
@@ -537,6 +583,10 @@ final class RenderPass {
       return true;
     }());
     _renderPass.end();
+  }
+
+  void setScissorRect(int x, int y, int width, int height) {
+    _renderPass.setScissorRect(x.toJS, y.toJS, width.toJS, height.toJS);
   }
 }
 
@@ -588,16 +638,15 @@ final class CanvasSwapchain {
   RenderTarget createNext() {
     var width = _canvas.width.toDartInt;
     var height = _canvas.height.toDartInt;
-    final GPUTexture msaaTex = _context.createTexture(
-      width: width,
-      height: height,
-      sampleCount: SampleCount.four,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-      format: format,
-    );
     return RenderTarget(
       format: format,
-      texture: msaaTex,
+      texture: _context.createTexture(
+        width: width,
+        height: height,
+        sampleCount: SampleCount.four,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        format: format,
+      ),
       resolve: _canvasContext.getCurrentTexture(),
       width: width,
       height: height,

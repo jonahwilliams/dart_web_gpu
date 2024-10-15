@@ -9,6 +9,10 @@ import 'dart:js_interop';
 @staticInterop
 class Element {}
 
+extension ElementHelper on Element {
+  external set innerText(JSString value);
+}
+
 @JS()
 @staticInterop
 class HTMLCanvas extends Element {}
@@ -242,7 +246,8 @@ extension GPURenderPassHelpers on GPURenderPass {
   external void setVertexBuffer(JSNumber slot, GPUBuffer? buffer,
       [JSNumber? offset, JSNumber? size]);
 
-  external void setBindGroup(JSNumber binding, GPUBindGroup bindGroup);
+  external void setBindGroup(JSNumber binding, GPUBindGroup bindGroup,
+      [JSArray? dynamicOffsets]);
 
   external void draw(JSNumber vertexCount,
       [JSNumber? instanceCount,
@@ -261,6 +266,9 @@ extension GPURenderPassHelpers on GPURenderPass {
       GPUBuffer indirectBuffer, JSNumber indirectOffset);
 
   external void end();
+
+  external void setScissorRect(
+      JSNumber x, JSNumber y, JSNumber width, JSNumber height);
 }
 
 @JS()
@@ -282,7 +290,8 @@ class GPUDeviceQueue {}
 extension GPUDeviceQueueHelpers on GPUDeviceQueue {
   external void submit(JSAny? buffers);
 
-  external void writeBuffer(GPUBuffer buffer, JSNumber offset, JSAny data);
+  external void writeBuffer(GPUBuffer buffer, JSNumber offset, JSAny data,
+      [JSNumber dataOffset, JSNumber size]);
 }
 
 @JS()
